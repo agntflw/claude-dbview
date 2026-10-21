@@ -17,6 +17,11 @@ export type IconName =
   | 'link'
   | 'database'
   | 'search'
+  | 'check'
+  | 'notnull'
+  | 'index'
+  | 'copy'
+  | 'refresh'
 
 const PATHS: Record<IconName, string> = {
   chevronRight: 'M6 4l4 4-4 4',
@@ -34,6 +39,11 @@ const PATHS: Record<IconName, string> = {
   database:
     'M2.5 4c0-.97 2.46-1.75 5.5-1.75s5.5.78 5.5 1.75v8c0 .97-2.46 1.75-5.5 1.75S2.5 12.97 2.5 12z M13.5 4c0 .97-2.46 1.75-5.5 1.75S2.5 4.97 2.5 4 M13.5 8c0 .97-2.46 1.75-5.5 1.75S2.5 8.97 2.5 8',
   search: 'M7 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10z M14 14l-3.5-3.5',
+  check: 'M3.5 8.5l3 3 6-7',
+  notnull: 'M8 3v10 M3.7 5.5l8.6 5 M3.7 10.5l8.6-5',
+  index: 'M3 3.5h10 M3 8h7 M3 12.5h4',
+  copy: 'M5.5 5.5V4a1.5 1.5 0 0 1 1.5-1.5h5A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5h-1.5 M2.5 7a1.5 1.5 0 0 1 1.5-1.5h5A1.5 1.5 0 0 1 10.5 7v5A1.5 1.5 0 0 1 9 13.5H4A1.5 1.5 0 0 1 2.5 12z',
+  refresh: 'M13.5 8a5.5 5.5 0 1 1-1.6-3.9 M13.5 2.5v3h-3',
 }
 
 const GLYPHS: Record<IconName, string> = {
@@ -49,8 +59,13 @@ const GLYPHS: Record<IconName, string> = {
   column: '·',
   key: '*',
   link: '→',
-  database: '●',
+  database: '◇',
   search: '⌕',
+  check: '✓',
+  notnull: '*',
+  index: '≣',
+  copy: '⧉',
+  refresh: '↻',
 }
 
 export const COLOR = {
@@ -59,7 +74,9 @@ export const COLOR = {
   muted: '#9c9a94',
   pill: '#30302e',
   border: '#3a3936',
+  ground: '#1f1e1d',
   connected: '#6cc070',
+  link: '#6aa6ee',
 }
 
 /** Icon colour and tile colour per object kind. */

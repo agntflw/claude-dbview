@@ -1,67 +1,46 @@
-import type { Connection } from './connection'
+import type { Target } from './connection'
+import { dockerPath } from './docker'
 import type { Host } from './host'
+import { PSQL_CANDIDATES, locate } from './locate'
 
 // The driver: one psql run per request, SQL on stdin, one JSON document on
 // stdout. Every session is read-only with a statement timeout, set through
-// PGOPTIONS so no SQL of ours can forget it.
-
-const CANDIDATES = [
-  '/opt/homebrew/bin/psql',
-  '/opt/homebrew/opt/libpq/bin/psql',
-  '/usr/local/bin/psql',
-  '/usr/local/opt/libpq/bin/psql',
-  '/Applications/Postgres.app/Contents/Versions/latest/bin/psql',
-  '/usr/bin/psql',
-]
+// PGOPTIONS so no SQL of ours can forget it. A Docker source runs the psql
+// inside its container.
 
 const STATEMENT_TIMEOUT_MS = 10_000
-
-let found: string | undefined
-
-async function locate(host: Host, configured: string): Promise<string> {
-  if (configured !== 'psql') return configured
-  if (found) return found
-
-  for (const path of ['psql', ...CANDIDATES]) {
-    try {
-      const { exitCode } = await host.run([path, '--version'], { timeoutMs: 5_000 })
-      if (exitCode === 0) {
-        found = path
-
-        return path
-      }
-    } catch {
-      // not there; try the next
-    }
-  }
-  throw new Error('psql was not found. Install the PostgreSQL client, or set the psql path in /config.')
-}
+const PGOPTIONS = `-c default_transaction_read_only=on -c statement_timeout=${STATEMENT_TIMEOUT_MS}`
+const PSQL_FLAGS = ['-X', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1']
 
 export type Variables = Record<string, string>
 
 export async function runJson<T>(
   host: Host,
-  connection: Connection,
+  target: Target,
   psqlPath: string,
   sql: string,
   variables: Variables = {},
 ): Promise<{ ok: true; value: T; ms: number } | { ok: false; error: string }> {
-  let executable: string
-  try {
-    executable = await locate(host, psqlPath)
-  } catch (error) {
-    return { ok: false, error: (error as Error).message }
-  }
+  const vars = Object.entries(variables).flatMap(([name, value]) => ['-v', `${name}=${value}`])
+  let argv: string[]
+  let env: Record<string, string> = {}
 
-  const argv = [executable, '-X', '-A', '-t', '-q', '-v', 'ON_ERROR_STOP=1']
-  for (const [name, value] of Object.entries(variables)) argv.push('-v', `${name}=${value}`)
-  argv.push('-f', '-')
-
-  const env: Record<string, string> = {
-    ...connection.env,
-    PGAPPNAME: 'claude-dbview',
-    PGCONNECT_TIMEOUT: '5',
-    PGOPTIONS: `-c default_transaction_read_only=on -c statement_timeout=${STATEMENT_TIMEOUT_MS}`,
+  if (target.kind === 'docker') {
+    const docker = await dockerPath(host)
+    if (!docker) return { ok: false, error: 'docker was not found.' }
+    argv = [
+      docker, 'exec', '-i',
+      '-e', `PGOPTIONS=${PGOPTIONS}`,
+      '-e', 'PGAPPNAME=claude-dbview',
+      target.container,
+      'psql', '-U', target.user, '-d', target.database,
+      ...PSQL_FLAGS, ...vars, '-f', '-',
+    ]
+  } else {
+    const psql = psqlPath === 'psql' ? await locate(host, 'psql', PSQL_CANDIDATES) : psqlPath
+    if (!psql) return { ok: false, error: 'psql was not found. Install the PostgreSQL client, or set the psql path in /config.' }
+    argv = [psql, ...PSQL_FLAGS, ...vars, '-f', '-']
+    env = { ...target.env, PGAPPNAME: 'claude-dbview', PGCONNECT_TIMEOUT: '5', PGOPTIONS }
   }
 
   const startedAt = await host.now()
@@ -74,7 +53,7 @@ export async function runJson<T>(
   const ms = Math.round((await host.now()) - startedAt)
 
   if (ran.exitCode !== 0) return { ok: false, error: plainError(ran.stderr) }
-  if (ran.isStdoutTruncated) return { ok: false, error: 'The answer was larger than 4 MB.' }
+  if (ran.isStdoutTruncated) return { ok: false, error: 'The answer was larger than 4 MB. Read fewer rows.' }
 
   try {
     return { ok: true, value: JSON.parse(ran.stdout) as T, ms }

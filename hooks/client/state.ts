@@ -5,16 +5,18 @@ import type { DbView } from '../../types'
 // land in it; the pane reads it while drawing and its presses write it.
 
 export const EMPTY_VIEW: DbView = {
-  target: null,
-  status: { phase: 'idle' },
-  catalog: null,
+  sources: [],
+  sourcesStatus: { phase: 'idle' },
+  catalogs: {},
+  status: {},
   expanded: [],
   selected: null,
-  columns: {},
+  relations: {},
   preview: null,
   ddl: null,
   detailStatus: { phase: 'idle' },
   tab: 'rows',
+  limit: 50,
   filter: '',
 }
 
@@ -24,7 +26,9 @@ export type ViewPort = {
   set: (change: (value: DbView) => DbView) => Promise<unknown>
 }
 
-export const schemaId = (schema: string) => `s:${schema}`
-export const folderId = (schema: string, folder: string) => `f:${schema}:${folder}`
-export const relationId = (schema: string, name: string) => `r:${schema}.${name}`
-export const relationKey = (schema: string, name: string) => `${schema}.${name}`
+// Tree node ids. `|` keeps a source, a schema and a name apart.
+export const sourceId = (source: string) => `c:${source}`
+export const schemaId = (source: string, schema: string) => `s:${source}|${schema}`
+export const folderId = (source: string, schema: string, folder: string) => `f:${source}|${schema}|${folder}`
+export const relationId = (source: string, schema: string, name: string) => `r:${source}|${schema}.${name}`
+export const relationKey = (source: string, schema: string, name: string) => `${source}|${schema}.${name}`

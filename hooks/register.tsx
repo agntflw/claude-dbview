@@ -17,7 +17,9 @@ import type { Host } from './engine/host'
 const PANE = 'dbview'
 const TITLE = 'Database'
 const view = atom({ plugin: 'dbview', key: 'view' } as const, EMPTY_VIEW)
-const USAGE = 'Use /db, /db connect postgres://user:password@host:5432/database, /db refresh or /db disconnect.'
+const USAGE =
+  'Use /db, /db connect postgres://user:password@host:5432/database [name], /db forget <name> or /db refresh. ' +
+  'Running Postgres containers show up by themselves.'
 
 export const register: Register = (on, options) => {
   const psqlPath = typeof options.psql_path === 'string' && options.psql_path ? options.psql_path : 'psql'
@@ -26,7 +28,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'db',
       description: 'Open the database view (PostgreSQL)',
-      argumentHint: '[connect <url> | refresh | disconnect]',
+      argumentHint: '[connect <url> [name] | forget <name> | refresh]',
     })
 
     return next(e)
@@ -58,31 +60,33 @@ export const register: Register = (on, options) => {
     const [verb = '', ...rest] = e.args.trim().split(/\s+/)
 
     if (verb === 'connect') {
-      const parsed = parseUrl(rest.join(' '))
+      const [url = '', name] = rest
+      const parsed = parseUrl(url)
       if ('error' in parsed) return { text: parsed.error }
-      await saveUrl(host, rest.join(' '))
-      await act.reset()
+      const saved = await saveUrl(host, url, name)
       await $.ui.open({ id: PANE, title: TITLE })
-      await act.loadCatalog()
-      const after = (await read($, view)).status
+      await act.loadSources()
+      await act.pickSource(`saved:${saved}`)
+      const after = (await read($, view)).status[`saved:${saved}`]
 
       return {
         text:
-          after.phase === 'error'
-            ? `Could not connect to ${parsed.label}: ${after.error}`
-            : `Connected to ${parsed.label}. The database view is open.`,
+          after?.phase === 'error'
+            ? `Saved ${saved} (${parsed.label}), but it did not answer: ${after.error}`
+            : `Connected to ${parsed.label} as ${saved}. The database view is open.`,
       }
     }
 
-    if (verb === 'disconnect') {
-      await forgetUrl(host)
-      await act.reset()
+    if (verb === 'forget' || verb === 'disconnect') {
+      const [name = ''] = rest
+      if (!(await forgetUrl(host, name))) return { text: `No saved connection is named ${name || 'that'}. ${USAGE}` }
+      await act.loadSources()
 
-      return { text: 'Forgot the saved connection. /db connect <url> sets a new one.' }
+      return { text: `Forgot ${name}.` }
     }
 
     if (verb === 'refresh') {
-      await act.loadCatalog()
+      await act.refresh()
 
       return { text: 'Database view refreshed.' }
     }
@@ -90,10 +94,17 @@ export const register: Register = (on, options) => {
     if (verb !== '') return { text: USAGE }
 
     await $.ui.open({ id: PANE, title: TITLE })
-    if ((await read($, view)).catalog === null) await act.loadCatalog()
-    const after = (await read($, view)).status
+    if ((await read($, view)).sources.length === 0) await act.loadSources()
+    const after = await read($, view)
+    if (after.sourcesStatus.phase === 'error') return { text: `Database view opened. ${after.sourcesStatus.error}` }
+    const names = after.sources.map(one => one.label)
 
-    return { text: after.phase === 'error' ? `Database view opened. ${after.error}` : 'Database view opened.' }
+    return {
+      text:
+        names.length === 0
+          ? `Database view opened. No database found yet. ${USAGE}`
+          : `Database view opened on ${names.length === 1 ? names[0] : `${names.length} databases: ${names.join(', ')}`}.`,
+    }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -124,7 +135,9 @@ export const register: Register = (on, options) => {
     return drawPane({
       els,
       Input: e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input,
+      Select: e.surface === 'mobile' ? undefined : $.ui.resolve(e).Select,
       Svg: e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg,
+      copy: text => void $.ui.copy({ text, surface: e.surface }),
       width: e.props.bodyColumns,
       view: await read($, view),
       act,

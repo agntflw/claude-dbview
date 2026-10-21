@@ -1,7 +1,7 @@
 {
   "name": "dbview",
-  "version": "0.1.0",
-  "description": "A PostgreSQL database view in a pane: schemas, tables, columns and row previews, like an IDE project tree.",
+  "version": "0.2.0",
+  "description": "A PostgreSQL database view in a pane: every database and Postgres container as an IDE-style tree, with columns, constraints, rows and DDL.",
   "author": {
     "name": "Eduard"
   },
