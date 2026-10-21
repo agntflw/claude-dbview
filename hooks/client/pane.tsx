@@ -157,6 +157,22 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   const well = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.well, paddingX: 1 } as const) : {}
   const frame = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.ground, paddingX: 1 } as const) : {}
   const framedRows = isGraphic ? 2 : 1
+  // A rounded pill behind a chosen item, a fainter one under the pointer: a
+  // Box's corners round only with a border, so each item has one in the
+  // colour of what it sits on until it is chosen. Hotkeys stay on the
+  // terminal; a graphical surface draws them as chips that crowd the pills.
+  const pill = (key: string, isOn: boolean, ground: string) =>
+    isGraphic
+      ? ({
+          key: `${key}:pill`,
+          borderStyle: 'round',
+          borderColor: isOn ? COLOR.pill : ground,
+          backgroundColor: isOn ? COLOR.pill : undefined,
+          hover: isOn ? undefined : { borderColor: COLOR.hover, backgroundColor: COLOR.hover },
+        } as const)
+      : {}
+  const strip = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.strip, backgroundColor: COLOR.strip } as const) : {}
+  const keyOf = (hotkey: string) => (isGraphic ? undefined : hotkey)
 
   const line = (name: IconName, color?: string) =>
     Svg ? <Svg source={lineSvg(name, color)} alt={name} width={16} height={16} /> : <Text dimColor>{glyphOf(name)}</Text>
@@ -275,7 +291,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         {shown && dotOf(stateOf(shown))}
       </Box>
       <Box flexShrink={0}>
-        <Button key="refresh" label={Svg ? 'Refresh' : '↻'} hotkey="r" plain dimColor onPress={() => void act.refresh()} />
+        <Button key="refresh" label={Svg ? 'Refresh' : '↻'} hotkey={keyOf('r')} plain dimColor onPress={() => void act.refresh()} />
       </Box>
     </Box>
   )
@@ -288,7 +304,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         <Box flexDirection="column">
           <Text>No database yet.</Text>
           <Text dimColor>/db connect postgres://user:password@host:5432/database, or start a Postgres container.</Text>
-          <Button key="refresh" label="Look again" hotkey="r" plain dimColor onPress={() => void act.refresh()} />
+          <Button key="refresh" label="Look again" hotkey={keyOf('r')} plain dimColor onPress={() => void act.refresh()} />
         </Box>
       )
     }
@@ -487,7 +503,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         paddingRight={1}
         flexShrink={0}
         overflow="hidden"
-        backgroundColor={row.isSelected && Svg ? COLOR.pill : undefined}
+        {...pill(row.key, row.isSelected === true, COLOR.panel)}
       >
         <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
           {chevron}
@@ -563,8 +579,8 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     return (
       <Box flexDirection="row" gap={Svg ? 0 : 2} flexShrink={0} {...frame}>
         {items.map(one => (
-          <Box paddingX={Svg ? 1 : 0} backgroundColor={one.id === chosen && Svg ? COLOR.pill : undefined}>
-            <Button key={one.key} plain hotkey={one.hotkey} onPress={() => pick(one.id)}>
+          <Box paddingX={Svg ? 1 : 0} {...pill(one.key, one.id === chosen, COLOR.ground)}>
+            <Button key={one.key} plain hotkey={one.hotkey && keyOf(one.hotkey)} onPress={() => pick(one.id)}>
               {one.id === chosen ? (
                 <Text weight="medium" mono={isMono} color={Svg ? COLOR.text : 'claude'}>
                   {one.label}
@@ -609,7 +625,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     )
 
     const cells = (icon: RenderElement, name: RenderElement, type: RenderElement, nullable: RenderElement, key: RenderElement, isHead = false) => (
-      <Box flexDirection="row" alignItems="center" backgroundColor={isHead && isGraphic ? COLOR.strip : undefined}>
+      <Box flexDirection="row" alignItems="center" {...(isHead ? strip : {})}>
         <Box width={3} flexShrink={0}>
           {icon}
         </Box>
@@ -633,7 +649,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
       </Text>
     )
     const title = (label: string, count: number) => (
-      <Box flexDirection="row" justifyContent="space-between" width={cols} backgroundColor={isGraphic ? COLOR.strip : undefined}>
+      <Box flexDirection="row" justifyContent="space-between" width={cols} {...strip}>
         <Text dimColor weight="medium">
           {` ${label}`}
         </Text>
@@ -715,7 +731,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     const gridCols = widths.reduce((sum, one) => sum + one + 2, 0)
 
     const drawCells = (cells: (string | null)[], isHeader: boolean) => (
-      <Box flexDirection="row" backgroundColor={isHeader && isGraphic ? COLOR.strip : undefined}>
+      <Box flexDirection="row" {...(isHeader ? strip : {})}>
         {cells.map((cell, index) => (
           <Box width={(widths[index] ?? CELL_MAX) + 2} flexShrink={0}>
             <Text
@@ -781,7 +797,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         </Text>
         <Box flexDirection="row" gap={1} alignItems="center">
           {Svg && line('copy')}
-          <Button key="copy" plain dimColor hotkey="y" onPress={() => copy(source)}>
+          <Button key="copy" plain dimColor hotkey={keyOf('y')} onPress={() => copy(source)}>
             Copy
           </Button>
         </Box>
