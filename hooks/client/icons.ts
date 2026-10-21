@@ -77,6 +77,15 @@ export const COLOR = {
   ground: '#1f1e1d',
   connected: '#6cc070',
   link: '#6aa6ee',
+  /** The tree's and the open object's panels, a step darker than the pane. */
+  panel: '#1a1918',
+  /** The well a section scrolls in, darker again. */
+  well: '#141413',
+  /** A table's header strip. */
+  strip: '#262624',
+  /** Scrollbar track and thumb. */
+  track: '#262523',
+  thumb: '#5a5852',
 }
 
 /** Icon colour and tile colour per object kind. */

@@ -109,6 +109,13 @@ export type DbTab = 'columns' | 'rows' | 'ddl'
 /** How many rows the Rows tab reads at once. */
 export type DbRowLimit = 50 | 100 | 500 | 1000
 
+/**
+ * Where the pane's two scrolled parts stand, in rows and cells: the tree, and
+ * the open object's section down and across. `for` names the object and tab
+ * the section offsets belong to; another one starts at the top left.
+ */
+export type DbScroll = { tree: number; detail: number; left: number; for: string }
+
 /** Everything the pane draws, in one value: one read per draw, one write per change. */
 export type DbView = {
   sources: DbSource[]
@@ -132,6 +139,8 @@ export type DbView = {
   limit: DbRowLimit
   /** The tree's filter, as typed. */
   filter: string
+  /** Absent in a view kept from before 0.3.0. */
+  scroll?: DbScroll
 }
 
 declare module 'claude-code' {

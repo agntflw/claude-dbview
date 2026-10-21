@@ -1,6 +1,6 @@
-import type { DbCatalog, DbRef, DbRowLimit, DbTab, DbView } from '../../types'
+import type { DbCatalog, DbRef, DbRowLimit, DbScroll, DbTab, DbView } from '../../types'
 import type { Engine } from '../engine/engine'
-import { EMPTY_VIEW, folderId, relationId, relationKey, schemaId, sourceId } from './state'
+import { EMPTY_SCROLL, EMPTY_VIEW, folderId, relationId, relationKey, schemaId, sourceId } from './state'
 import type { ViewPort } from './state'
 
 // What a press or a command does: ask the engine, write the answer to the
@@ -119,7 +119,12 @@ export function createActions(engine: Engine, port: ViewPort) {
   }
 
   async function setFilter(filter: string): Promise<void> {
-    await port.set(v => ({ ...v, filter }))
+    await port.set(v => ({ ...v, filter, scroll: { ...(v.scroll ?? EMPTY_SCROLL), tree: 0 } }))
+  }
+
+  /** Moves the tree's or the open section's window; the pane clamps what it draws. */
+  async function setScroll(scroll: DbScroll): Promise<void> {
+    await port.set(v => ({ ...v, scroll }))
   }
 
   async function reset(): Promise<void> {
@@ -176,7 +181,7 @@ export function createActions(engine: Engine, port: ViewPort) {
     return now !== null && sameRef(now, ref)
   }
 
-  return { loadSources, refresh, loadCatalog, toggleSource, pickSource, toggle, pressRelation, setTab, setLimit, setFilter, reset }
+  return { loadSources, refresh, loadCatalog, toggleSource, pickSource, toggle, pressRelation, setTab, setLimit, setFilter, setScroll, reset }
 }
 
 function sameRef(a: DbRef, b: DbRef): boolean {
