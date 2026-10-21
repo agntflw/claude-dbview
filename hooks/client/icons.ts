@@ -81,6 +81,8 @@ export const COLOR = {
   panel: '#1a1918',
   /** The well a section scrolls in, darker again. */
   well: '#141413',
+  /** A row or a segment under the pointer. */
+  hover: '#262523',
   /** A table's header strip. */
   strip: '#262624',
   /** Scrollbar track and thumb. */

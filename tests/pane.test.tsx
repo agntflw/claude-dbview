@@ -41,6 +41,9 @@ function replay(argv: readonly string[], stdin: string | undefined) {
   if (argv.includes('--version')) return answer(0, `${argv[0]} 1.0\n`)
   const recorded = RECORDED[callKey(argv, stdin)]
   if (recorded !== undefined) return answer(0, recorded)
+  // The limit steps through 100 on its way to 500; the recording has 50 and 500.
+  const stepped = stdin && RECORDED[callKey(argv, stdin.replace(/limit 100\b/g, 'limit 500'))]
+  if (stepped) return answer(0, stepped)
 
   return answer(3, '', `ERROR:  no recording for ${callKey(argv, stdin)}\n`)
 }
@@ -115,7 +118,9 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(await ui.find({ text: /^NULL$/ })).toBeDefined()
 
     // The limit: 500 reads all 400.
-    await ui.press({ key: 'limit-500' })
+    await ui.press({ key: 'limit-more' })
+    await ui.press({ key: 'limit-more' })
+    expect(await ui.find({ text: /^500$/ })).toBeDefined()
     expect(await ui.find({ text: '400 rows · showing 400' })).toBeDefined()
     expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 500;' })).toBeDefined()
 
@@ -136,8 +141,13 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(code?.props.source).toMatch(/^CREATE SEQUENCE sales\.orders_id_seq\n/)
     expect(code?.props.source).toMatch(/ALTER SEQUENCE sales\.orders_id_seq OWNED BY sales\.orders\.id;$/)
     expect(code?.props.startLine).toBe(1)
-    await ui.press({ key: 'copy' })
-    expect(copied).toEqual([code?.props.source])
+    // The desktop's code block copies by itself; the terminal has a Copy.
+    if (surface === 'terminal') {
+      await ui.press({ key: 'copy' })
+      expect(copied).toEqual([code?.props.source])
+    } else {
+      expect(await ui.find({ type: 'Button', key: 'copy' })).toBeUndefined()
+    }
     await ui.unmount()
   })
 }

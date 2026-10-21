@@ -10,6 +10,7 @@ import type {
   DbRelation,
   DbRelationDetail,
   DbSchema,
+  DbRowLimit,
   DbScroll,
   DbSource,
   DbTab,
@@ -157,6 +158,22 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   const well = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.well, paddingX: 1 } as const) : {}
   const frame = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.ground, paddingX: 1 } as const) : {}
   const framedRows = isGraphic ? 2 : 1
+  // A rounded pill behind a chosen item, a fainter one under the pointer: a
+  // Box's corners round only with a border, so each item has one in the
+  // colour of what it sits on until it is chosen. Hotkeys stay on the
+  // terminal; a graphical surface draws them as chips that crowd the pills.
+  const pill = (key: string, isOn: boolean, ground: string) =>
+    isGraphic
+      ? ({
+          key: `${key}:pill`,
+          borderStyle: 'round',
+          borderColor: isOn ? COLOR.pill : ground,
+          backgroundColor: isOn ? COLOR.pill : undefined,
+          hover: isOn ? undefined : { borderColor: COLOR.hover, backgroundColor: COLOR.hover },
+        } as const)
+      : {}
+  const strip = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.strip, backgroundColor: COLOR.strip } as const) : {}
+  const keyOf = (hotkey: string) => (isGraphic ? undefined : hotkey)
 
   const line = (name: IconName, color?: string) =>
     Svg ? <Svg source={lineSvg(name, color)} alt={name} width={16} height={16} /> : <Text dimColor>{glyphOf(name)}</Text>
@@ -180,45 +197,38 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   const detailFor = view.selected ? `${relationKey(view.selected.source, view.selected.schema, view.selected.name)}:${view.tab}` : ''
   const scroll = scrollOf(view, detailFor)
 
-  // A vertical bar beside a scrolled part: a thin track, the thumb sized to
-  // what shows, a step up and down at its ends. Only while there is more.
+  // A vertical bar beside a scrolled part: a track, the thumb sized to what
+  // shows, a step up and down at its ends. Only while there is more. Every
+  // cell of the track is a press that brings that part of the list into view.
   function vbar(id: string, offset: number, span: Span, shown: number, move: (to: number) => void) {
     if (span.max <= 0) return false
     const step = Math.max(1, Math.floor(span.page / 2))
-    const up = (
-      <Button key={`${id}-up`} plain dimColor onPress={() => move(Math.max(0, offset - step))}>
-        ▴
-      </Button>
-    )
-    const down = (
-      <Button key={`${id}-down`} plain dimColor onPress={() => move(Math.min(span.max, offset + step))}>
-        ▾
-      </Button>
-    )
-    if (isGraphic) {
-      return (
-        <Box flexDirection="column" alignItems="center" flexShrink={0}>
-          {up}
-          <Box flexDirection="column" flexGrow={1} width={1} backgroundColor={COLOR.track}>
-            <Box flexGrow={offset} />
-            <Box flexGrow={span.page} minHeight={1} backgroundColor={COLOR.thumb} />
-            <Box flexGrow={span.max - offset} />
-          </Box>
-          {down}
-        </Box>
-      )
-    }
     const track = Math.max(1, shown - 2)
     const thumb = clamp(Math.round((track * span.page) / (span.max + span.page)), 1, track)
     const from = Math.round(((track - thumb) * offset) / span.max)
+    const at = (index: number) => Math.round((span.max * index) / Math.max(1, track - 1))
 
     return (
-      <Box flexDirection="column" flexShrink={0} width={1}>
-        {up}
-        {Array.from({ length: track }, (_, index) =>
-          index >= from && index < from + thumb ? <Text color={COLOR.muted}>┃</Text> : <Text dimColor>│</Text>,
-        )}
-        {down}
+      <Box flexDirection="column" alignItems="center" flexShrink={0} width={1} overflow="hidden">
+        <Button key={`${id}-up`} plain onPress={() => move(Math.max(0, offset - step))}>
+          <Text color={COLOR.muted}>{isGraphic ? '▲' : '▴'}</Text>
+        </Button>
+        {Array.from({ length: track }, (_, index) => (
+          <Button key={`${id}-at-${index}`} plain onPress={() => move(at(index))}>
+            {index >= from && index < from + thumb ? (
+              <Text mono color={isGraphic ? COLOR.thumb : COLOR.muted}>
+                ┃
+              </Text>
+            ) : (
+              <Text mono color={isGraphic ? COLOR.track : undefined} dimColor={!isGraphic}>
+                │
+              </Text>
+            )}
+          </Button>
+        ))}
+        <Button key={`${id}-down`} plain onPress={() => move(Math.min(span.max, offset + step))}>
+          <Text color={COLOR.muted}>{isGraphic ? '▼' : '▾'}</Text>
+        </Button>
       </Box>
     )
   }
@@ -282,7 +292,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         {shown && dotOf(stateOf(shown))}
       </Box>
       <Box flexShrink={0}>
-        <Button key="refresh" label={Svg ? 'Refresh' : '↻'} hotkey="r" plain dimColor onPress={() => void act.refresh()} />
+        <Button key="refresh" label={Svg ? 'Refresh' : '↻'} hotkey={keyOf('r')} plain dimColor onPress={() => void act.refresh()} />
       </Box>
     </Box>
   )
@@ -295,7 +305,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         <Box flexDirection="column">
           <Text>No database yet.</Text>
           <Text dimColor>/db connect postgres://user:password@host:5432/database, or start a Postgres container.</Text>
-          <Button key="refresh" label="Look again" hotkey="r" plain dimColor onPress={() => void act.refresh()} />
+          <Button key="refresh" label="Look again" hotkey={keyOf('r')} plain dimColor onPress={() => void act.refresh()} />
         </Box>
       )
     }
@@ -447,7 +457,20 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   // A tree row. The name keeps its room and the count or type at the right
   // gives way first; what still does not fit is cut at the panel's edge.
   const drawRow = (row: Row) => {
-    const chevron = row.isOpen === undefined ? spacer() : line(row.isOpen ? 'chevronDown' : 'chevronRight')
+    // The chevron folds the row too: a press of its own, as the name is.
+    const chevron = (
+      <Box width={2} flexShrink={0}>
+        {row.isOpen === undefined ? (
+          spacer()
+        ) : row.onPress ? (
+          <Button key={`${row.key}:fold`} plain onPress={row.onPress}>
+            <Text color={COLOR.muted}>{Svg ? (row.isOpen ? '▾' : '▸') : glyphOf(row.isOpen ? 'chevronDown' : 'chevronRight')}</Text>
+          </Button>
+        ) : (
+          line(row.isOpen ? 'chevronDown' : 'chevronRight')
+        )}
+      </Box>
+    )
     const accent = accentOf(row.icon)
     const icon = accent ? line(row.icon, accent) : row.isTile ? tile(row.icon, 20) : line(row.icon)
     const isGroup = row.depth === 1
@@ -481,7 +504,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         paddingRight={1}
         flexShrink={0}
         overflow="hidden"
-        backgroundColor={row.isSelected && Svg ? COLOR.pill : undefined}
+        {...pill(row.key, row.isSelected === true, COLOR.panel)}
       >
         <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
           {chevron}
@@ -496,7 +519,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         </Box>
         <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
           {row.meta ? (
-            <Text dimColor mono={row.isMono} size="footnote" wrap="truncate-end">
+            <Text dimColor mono={row.isMono} size={row.isMono ? undefined : 'footnote'} wrap="truncate-end">
               {row.meta}
             </Text>
           ) : (
@@ -557,8 +580,8 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     return (
       <Box flexDirection="row" gap={Svg ? 0 : 2} flexShrink={0} {...frame}>
         {items.map(one => (
-          <Box paddingX={Svg ? 1 : 0} backgroundColor={one.id === chosen && Svg ? COLOR.pill : undefined}>
-            <Button key={one.key} plain hotkey={one.hotkey} onPress={() => pick(one.id)}>
+          <Box paddingX={Svg ? 1 : 0} {...pill(one.key, one.id === chosen, COLOR.ground)}>
+            <Button key={one.key} plain hotkey={one.hotkey && keyOf(one.hotkey)} onPress={() => pick(one.id)}>
               {one.id === chosen ? (
                 <Text weight="medium" mono={isMono} color={Svg ? COLOR.text : 'claude'}>
                   {one.label}
@@ -603,7 +626,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     )
 
     const cells = (icon: RenderElement, name: RenderElement, type: RenderElement, nullable: RenderElement, key: RenderElement, isHead = false) => (
-      <Box flexDirection="row" alignItems="center" backgroundColor={isHead && isGraphic ? COLOR.strip : undefined}>
+      <Box flexDirection="row" alignItems="center" {...(isHead ? strip : {})}>
         <Box width={3} flexShrink={0}>
           {icon}
         </Box>
@@ -627,7 +650,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
       </Text>
     )
     const title = (label: string, count: number) => (
-      <Box flexDirection="row" justifyContent="space-between" width={cols} backgroundColor={isGraphic ? COLOR.strip : undefined}>
+      <Box flexDirection="row" justifyContent="space-between" width={cols} {...strip}>
         <Text dimColor weight="medium">
           {` ${label}`}
         </Text>
@@ -709,7 +732,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     const gridCols = widths.reduce((sum, one) => sum + one + 2, 0)
 
     const drawCells = (cells: (string | null)[], isHeader: boolean) => (
-      <Box flexDirection="row" backgroundColor={isHeader && isGraphic ? COLOR.strip : undefined}>
+      <Box flexDirection="row" {...(isHeader ? strip : {})}>
         {cells.map((cell, index) => (
           <Box width={(widths[index] ?? CELL_MAX) + 2} flexShrink={0}>
             <Text
@@ -739,12 +762,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
           <Text dimColor size="footnote">
             Limit
           </Text>
-          {track(
-            ROW_LIMITS.map(one => ({ id: one, label: String(one), key: `limit-${one}` })),
-            view.limit,
-            id => void act.setLimit(id),
-            true,
-          )}
+          {limitStepper()}
         </Box>
       </Box>
     )
@@ -765,20 +783,44 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     return { lines, cols: Math.max(gridCols, value.query.length, summary.length), toolbar, toolbarRows: framedRows }
   }
 
+  // One number between two steps, through the presets: the cleanest the
+  // pane can draw, as it has no drag. A step at the end of the range dims.
+  function limitStepper() {
+    const at = ROW_LIMITS.indexOf(view.limit)
+    const less = ROW_LIMITS[at - 1]
+    const more = ROW_LIMITS[at + 1]
+    const step = (key: string, glyph: string, to: DbRowLimit | undefined) =>
+      to === undefined ? (
+        <Text color={COLOR.border}>{glyph}</Text>
+      ) : (
+        <Button key={key} plain onPress={() => void act.setLimit(to)}>
+          <Text color={COLOR.muted}>{glyph}</Text>
+        </Button>
+      )
+
+    return (
+      <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0} {...frame}>
+        {step('limit-less', '‹', less)}
+        <Box width={4} justifyContent="center">
+          <Text mono weight="medium" tabular>
+            {String(view.limit)}
+          </Text>
+        </Box>
+        {step('limit-more', '›', more)}
+      </Box>
+    )
+  }
+
+  // The DDL. A graphical surface's code block carries its own frame and copy
+  // button, so there it stands alone; the terminal's has neither.
   function ddlSection(source: string): Section {
     const sourceLines = source.split('\n')
     const gutter = String(sourceLines.length).length + 2
-    const toolbar = (
-      <Box flexDirection="row" justifyContent="space-between" alignItems="center" flexShrink={0}>
-        <Text dimColor size="footnote">
-          SQL · generated from pg_catalog
-        </Text>
-        <Box flexDirection="row" gap={1} alignItems="center">
-          {Svg && line('copy')}
-          <Button key="copy" plain dimColor hotkey="y" onPress={() => copy(source)}>
-            Copy
-          </Button>
-        </Box>
+    const toolbar = isGraphic ? undefined : (
+      <Box flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
+        <Button key="copy" plain dimColor hotkey="y" onPress={() => copy(source)}>
+          Copy
+        </Button>
       </Box>
     )
 
@@ -786,7 +828,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
       lines: sourceLines.map(one => <Text wrap="truncate-end">{one}</Text>),
       cols: gutter + Math.max(...sourceLines.map(one => one.length)) + 1,
       toolbar,
-      toolbarRows: 1,
+      toolbarRows: toolbar ? 1 : 0,
       code: source,
     }
   }
@@ -820,7 +862,9 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     const note =
       view.tab === 'columns' && known
         ? `${known.columns.length} columns · ${known.constraints.length} constraint${known.constraints.length === 1 ? '' : 's'}`
-        : ''
+        : view.tab === 'ddl'
+          ? 'SQL · generated from pg_catalog'
+          : ''
 
     // Rows down: the panel less its frame, the title's two, the tabs, the
     // toolbar, the well's frame and the bar across; each with its gap.
@@ -880,7 +924,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         </Box>
         {section?.toolbar}
         {section && (
-          <Box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" {...well}>
+          <Box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" {...(section.code && isGraphic ? {} : well)}>
             <Box flexDirection="row" gap={1} flexGrow={1} minHeight={0} overflow="hidden">
               <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
                 <Box flexDirection="column" width={contentCols} marginLeft={section.code ? 0 : -left} flexShrink={0}>
@@ -911,10 +955,14 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     </Box>
   )
 
+  // The desktop asks to move a pane's window only while the body is taller
+  // than the pane, so two spare rows under the panels keep the wheel coming.
+  // The ui.scroll hook keeps the window where it is and moves the panels.
   const element = (
     <Box flexDirection="column" gap={1}>
       {notice}
       {view.sources.length > 0 && body}
+      {view.sources.length > 0 && isGraphic && <Box height={2} flexShrink={0} />}
     </Box>
   )
 
