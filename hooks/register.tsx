@@ -20,8 +20,12 @@ const TITLE = 'Database'
 const view = atom({ plugin: 'dbview', key: 'view' } as const, EMPTY_VIEW)
 /** What the pane last laid out, so a wheel over it moves the part under the pointer. */
 let layout: PaneLayout | undefined
-/** Where the body scrolls: the open object, and the body row it opened at. */
+/** Where the body scrolls: the open object, and the body row it stands at. */
 let opened: { for: string; top: number } | undefined
+/** The latest wheel over the tree, so the object follows once it stops. */
+let settling = 0
+/** How long the wheel rests before the open object comes to the top of the window. */
+const SETTLE_MS = 300
 const USAGE =
   'Use /db, /db connect postgres://user:password@host:5432/database [name], /db forget <name> or /db refresh. ' +
   'Running Postgres containers show up by themselves.'
@@ -160,8 +164,19 @@ export const register: Register = (on, options) => {
   // On the terminal the pane scrolls its tree and its open object itself,
   // each in a window of its own, so the body never moves: the wheel moves the
   // part under it. A graphical surface has moved the body already: let it.
+  // Wide, once a wheel over the tree rests, the open object comes to the top
+  // of the window: it moves once, after the scroll, never during it.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const now = layout
+    if (now?.isFlow && now.isWide && e.pointer && e.pointer.column < now.split) {
+      const tick = ++settling
+      const top = Math.min(Math.max(0, e.offset), Math.max(0, e.contentRows - e.bodyRows))
+      $.clock.after(SETTLE_MS, () => {
+        if (tick !== settling || !opened || opened.top === top) return
+        opened = { ...opened, top }
+        $.ui.invalidate('ui.render')
+      })
+    }
     if (!now || now.isFlow) return next(e)
     await update($, view, value => ({ ...value, scroll: scrolled(value, now, e.by, e.pointer) }))
 
