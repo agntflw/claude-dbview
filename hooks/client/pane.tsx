@@ -25,8 +25,11 @@ import type { Row } from './tree'
 // The client side: draws the pane from the view, on whichever surface asks.
 // Two panels, as the Claude desktop sidebar sits beside its content: the tree
 // (data source, schema, kind folder, object, column) and the open object.
-// Side by side when the pane is wide, stacked when it is narrow; each panel
-// scrolls on its own, the open object across as well, with its own bars.
+// Side by side when the pane is wide, stacked when it is narrow. On the
+// terminal each panel scrolls on its own, in a window with its own bar. A
+// graphical surface scrolls the pane's body itself before it asks, so there
+// the panels stand at their whole height and the body scrolls as one. The
+// open object moves across with its own bar on every surface.
 // A foreign key is a link: a press opens the table it points at.
 // Nothing here reaches a database.
 
@@ -42,6 +45,8 @@ export type PaneInput = {
   /** The pane body, in cells across and rows down. */
   width: number
   height: number
+  /** Graphical, wide: the body row the open object stands at, where the window was when it opened. */
+  detailTop?: number
   view: DbView
   act: Actions
   /** Puts text on the clipboard of the surface drawing the pane. */
@@ -54,6 +59,8 @@ export type Span = { max: number; page: number }
 /** What the last drawing laid out: where a wheel over the body lands, and how far each part moves. */
 export type PaneLayout = {
   isWide: boolean
+  /** The panels stand at their whole height and the body's window scrolls them (a graphical surface). */
+  isFlow: boolean
   /** Wide: the tree's columns from the left edge. Stacked: the tree's rows from the top. */
   split: number
   /** The body row from which a wheel over the open object moves it across (its bar's row). */
@@ -72,8 +79,6 @@ const TREE_SHARE = 0.3
 const TREE_MIN = 32
 const TREE_MAX = 52
 const CELL_MAX = 40
-/** A graphical surface's rows are drawn in pixels: place a few more than counted, the panel clips them. */
-const SLACK = 6
 
 const KIND_WORD: Record<DbRelation['kind'], string> = {
   table: 'table',
@@ -100,9 +105,13 @@ const CONSTRAINT_ICON: Record<DbConstraint['kind'], IconName> = {
   notnull: 'notnull',
 }
 
-export function drawPane({ els, Input, Select, Svg, width, height, view, act, copy }: PaneInput): PaneDrawing {
+export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0, view, act, copy }: PaneInput): PaneDrawing {
   const { Box, Text, Button, Code } = els
   const isGraphic = Svg !== undefined
+  // A graphical surface moves the body's window first and asks after, so a
+  // window drawn inside the panels fought it and the pane jumped back on every
+  // tick: there the panels stand whole and the window is the scroll.
+  const isFlow = isGraphic
 
   // The room. Wide: tree at the left, a share of the width within bounds, the
   // open object takes the rest. Narrow: the tree on top, the object below.
@@ -138,6 +147,12 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
           hover: isOn ? undefined : { borderColor: COLOR.hover, backgroundColor: COLOR.hover },
         } as const)
       : {}
+  // A tree row is filled without a border: a graphical border pads its Box
+  // and spreads the rows apart.
+  const rowFill = (key: string, isOn: boolean) =>
+    isGraphic
+      ? ({ key: `${key}:fill`, backgroundColor: isOn ? COLOR.pill : undefined, hover: isOn ? undefined : { backgroundColor: COLOR.hover } } as const)
+      : {}
   const strip = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.strip, backgroundColor: COLOR.strip } as const) : {}
   const keyOf = (hotkey: string) => (isGraphic ? undefined : hotkey)
 
@@ -168,7 +183,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     </Box>
   )
 
-  const detailFor = view.selected ? `${relationKey(view.selected.source, view.selected.schema, view.selected.name)}:${view.tab}` : ''
+  const detailFor = detailForOf(view)
   const scroll = scrollOf(view, detailFor)
 
   // A vertical bar beside a scrolled part: a track, the thumb sized to what
@@ -293,14 +308,15 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   // A tree row. The name keeps its room and the count or type at the right
   // gives way first; what still does not fit is cut at the panel's edge.
   const drawRow = (row: Row) => {
-    // The chevron folds the row too: a press of its own, as the name is.
+    // The chevron folds the row too: a press of its own, as the name is, in
+    // the thin glyph of the line icon it stands for.
     const chevron = (
       <Box width={2} flexShrink={0}>
         {row.isOpen === undefined ? (
           spacer()
         ) : row.onPress ? (
           <Button key={`${row.key}:fold`} plain onPress={row.onPress}>
-            <Text color={COLOR.muted}>{Svg ? (row.isOpen ? '▾' : '▸') : glyphOf(row.isOpen ? 'chevronDown' : 'chevronRight')}</Text>
+            <Text color={COLOR.muted}>{glyphOf(row.isOpen ? 'chevronDown' : 'chevronRight')}</Text>
           </Button>
         ) : (
           line(row.isOpen ? 'chevronDown' : 'chevronRight')
@@ -340,7 +356,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         paddingRight={1}
         flexShrink={0}
         overflow="hidden"
-        {...pill(row.key, row.isSelected === true, COLOR.panel)}
+        {...rowFill(row.key, row.isSelected === true)}
       >
         <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
           {chevron}
@@ -384,21 +400,34 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
       false
     )
 
-  // The tree panel: switcher, filter, then the rows in a window of their own.
+  // The tree panel: switcher, filter, then the rows, in a window of their own
+  // on the terminal, all of them where the body scrolls.
   const filterRows = filterField ? (isGraphic ? 2 : 1) + 1 : 0
-  const treeFit = Math.max(3, treeRows - edgeRows - framedRows - 1 - filterRows)
+  const treeFit = isFlow ? rows.length : Math.max(3, treeRows - edgeRows - framedRows - 1 - filterRows)
   const tree: Span = { max: Math.max(0, rows.length - treeFit), page: treeFit }
   const treeTop = Math.min(scroll.tree, tree.max)
-  const treeShown = rows.slice(treeTop, treeTop + treeFit + (isGraphic ? SLACK : 0))
+  const treeShown = rows.slice(treeTop, treeTop + treeFit)
   const moveTree = (to: number) => void act.setScroll({ ...scroll, tree: to })
+  // Where the body scrolls, a panel is at least the room it had and grows past it.
+  const rowsOf = (rows: number) => (isFlow ? { minHeight: rows } : { height: rows })
+  // Stacked where the body scrolls, the open object stands under the row
+  // that opened it, its own rows included, so it opens in view; the rest of
+  // the tree follows it.
+  const isSplit = isFlow && !isWide && hasDetail
+  const selectedAt = treeShown.findIndex(row => row.isSelected)
+  let splitAt = selectedAt < 0 ? treeShown.length : selectedAt + 1
+  while (selectedAt >= 0 && splitAt < treeShown.length && (treeShown[splitAt]?.depth ?? 0) > (treeShown[selectedAt]?.depth ?? 0)) splitAt++
+  const treeHead = isSplit ? treeShown.slice(0, splitAt) : treeShown
+  const treeTail = isSplit ? treeShown.slice(splitAt) : []
+  const treeRoom = isSplit ? 0 : treeRows
 
   const treePanel = (
-    <Box flexDirection="column" gap={1} width={treeCols} height={treeRows} flexShrink={0} overflow="hidden" {...panel}>
+    <Box flexDirection="column" gap={1} width={treeCols} {...rowsOf(treeRoom)} flexShrink={0} overflow="hidden" {...panel}>
       {switcher}
       {filterField}
       <Box flexDirection="row" gap={1} flexGrow={1} minHeight={0} overflow="hidden">
         <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-          {treeShown.map(drawRow)}
+          {treeHead.map(drawRow)}
           {filter !== '' && rows.every(row => row.depth === 0) && <Text dimColor>Nothing matches “{view.filter}”.</Text>}
         </Box>
         {vbar('tree', treeTop, tree, treeFit, moveTree)}
@@ -740,12 +769,11 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     const lines = section?.lines ?? []
     const leftMax = Math.max(0, (section?.cols ?? 0) - sectionCols)
     const toolbarRows = section?.toolbar ? section.toolbarRows + 1 : 0
-    const fit = Math.max(3, detailRows - edgeRows - 2 - 1 - framedRows - 1 - toolbarRows - edgeRows - (leftMax > 0 ? 1 : 0))
+    const fit = isFlow ? lines.length : Math.max(3, detailRows - edgeRows - 2 - 1 - framedRows - 1 - toolbarRows - edgeRows - (leftMax > 0 ? 1 : 0))
     detailSpan = { max: Math.max(0, lines.length - fit), page: fit }
     leftSpan = { max: leftMax, page: sectionCols }
     const top = Math.min(scroll.detail, detailSpan.max)
     const left = Math.min(scroll.left, leftSpan.max)
-    const place = fit + (isGraphic ? SLACK : 0)
     const moveDown = (to: number) => void act.setScroll({ ...scroll, detail: to })
     const moveAcross = (to: number) => void act.setScroll({ ...scroll, left: to })
 
@@ -754,7 +782,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
       <Code
         source={section.code
           .split('\n')
-          .slice(top, top + place)
+          .slice(top, top + fit)
           .map(one => one.slice(left))
           .join('\n')}
         language="sql"
@@ -762,7 +790,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         wrap="truncate-end"
       />
     ) : (
-      lines.slice(top, top + place)
+      lines.slice(top, top + fit)
     )
     const contentCols = section?.code ? sectionCols : Math.max(section?.cols ?? 0, sectionCols)
 
@@ -777,7 +805,17 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     )
 
     return (
-      <Box flexDirection="column" gap={1} width={isWide ? detailCols : undefined} height={detailRows} flexGrow={1} overflow="hidden" {...panel}>
+      <Box
+        key="detail"
+        flexDirection="column"
+        gap={1}
+        width={isWide ? detailCols : undefined}
+        {...rowsOf(detailRows)}
+        marginTop={isFlow && isWide ? clamp(detailTop, 0, rows.length) : undefined}
+        flexGrow={1}
+        overflow="hidden"
+        {...panel}
+      >
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} overflow="hidden">
           <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
             {tile(KIND_ICON[ref.kind], 32)}
@@ -807,6 +845,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         {section?.toolbar}
         {section && (
           <Box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" {...(section.code && isGraphic ? {} : well)}>
+            {isFlow && hbar(left, leftSpan, sectionCols, moveAcross)}
             <Box flexDirection="row" gap={1} flexGrow={1} minHeight={0} overflow="hidden">
               <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
                 <Box flexDirection="column" width={contentCols} marginLeft={section.code ? 0 : -left} flexShrink={0}>
@@ -815,7 +854,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
               </Box>
               {vbar('detail', top, detailSpan, fit, moveDown)}
             </Box>
-            {hbar(left, leftSpan, sectionCols, moveAcross)}
+            {!isFlow && hbar(left, leftSpan, sectionCols, moveAcross)}
           </Box>
         )}
       </Box>
@@ -824,33 +863,36 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
 
   // Wide with nothing open: the right panel says what goes there.
   const emptyPanel = (
-    <Box flexDirection="column" width={detailCols} height={detailRows} flexGrow={1} justifyContent="center" alignItems="center" {...panel}>
+    <Box flexDirection="column" width={detailCols} {...rowsOf(detailRows)} flexGrow={1} justifyContent="center" alignItems="center" {...panel}>
       <Text dimColor>Pick a table, view or sequence to see its columns, rows and DDL.</Text>
     </Box>
   )
 
   const detail = view.selected ? detailPanel(view.selected) : isWide ? emptyPanel : false
+  const rest = treeTail.length > 0 && (
+    <Box flexDirection="column" width={treeCols} flexShrink={0} overflow="hidden" {...panel}>
+      {treeTail.map(drawRow)}
+    </Box>
+  )
   const body = (
-    <Box flexDirection={isWide ? 'row' : 'column'} gap={1} height={bodyRows} overflow="hidden">
+    <Box flexDirection={isWide ? 'row' : 'column'} gap={1} alignItems={isFlow && isWide ? 'flex-start' : undefined} {...rowsOf(bodyRows)} overflow="hidden">
       {treePanel}
       {detail}
+      {rest}
     </Box>
   )
 
-  // The desktop asks to move a pane's window only while the body is taller
-  // than the pane, so two spare rows under the panels keep the wheel coming.
-  // The ui.scroll hook keeps the window where it is and moves the panels.
   const element = (
     <Box flexDirection="column" gap={1}>
       {notice}
       {view.sources.length > 0 && body}
-      {view.sources.length > 0 && isGraphic && <Box height={2} flexShrink={0} />}
     </Box>
   )
 
   // The bar across sits on the detail panel's last inner row, inside the well's frame.
   const layout: PaneLayout = {
     isWide,
+    isFlow,
     split: isWide ? treeCols : treeRows,
     across: (isWide ? 0 : treeRows + 1) + detailRows - (isGraphic ? 5 : 3),
     tree,
@@ -878,6 +920,11 @@ export function scrolled(view: DbView, layout: PaneLayout, by: number, pointer?:
   const step = part === 'left' ? by * 4 : pointer ? by * 3 : by
 
   return { ...now, [part]: clamp(now[part] + step, 0, layout[part].max), for: layout.for }
+}
+
+/** The object and tab open, which the detail's offsets belong to; empty with none. */
+export function detailForOf(view: DbView): string {
+  return view.selected ? `${relationKey(view.selected.source, view.selected.schema, view.selected.name)}:${view.tab}` : ''
 }
 
 /** The view's offsets, the detail's set back to the top left when another object or tab is open. */

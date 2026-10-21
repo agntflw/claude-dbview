@@ -219,38 +219,78 @@ test('a saved connection that is refused says so in one line, and is forgotten b
   expect((await $.command.run(run('forget shop'))).text).toBe('Forgot shop.')
 })
 
-for (const surface of ['desktop', 'terminal'] as const) {
-  test(`the tree and the open object scroll on their own, down and across (${surface})`, async ($, on) => {
-    host(on, { DATABASE_URL: HOST_URL })
-    await $.session.start({ cwd: '/', surface, isInteractive: true })
-    await $.command.run(run(''))
-    const ui = await $.ui.mount(pane(surface, 44, 36))
+test('on the terminal the tree and the open object scroll on their own, down and across', async ($, on) => {
+  host(on, { DATABASE_URL: HOST_URL })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(run(''))
+  const ui = await $.ui.mount(pane('terminal', 44, 36))
 
-    // Narrow: stacked, the rows of orders in a window under the tree.
-    await ui.press({ key: 'r:env|sales.orders' })
-    expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 50;' })).toBeDefined()
-    expect(await ui.find({ text: /ms · read-only/ })).toBeUndefined()
-    expect(await ui.find({ type: 'Button', key: 'detail-up' })).toBeDefined()
-    for (let step = 0; step < 60; step++) await ui.press({ key: 'detail-down' })
-    expect(await ui.find({ text: /ms · read-only/ })).toBeDefined()
-    expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 50;' })).toBeUndefined()
+  // Narrow: stacked, the rows of orders in a window under the tree.
+  await ui.press({ key: 'r:env|sales.orders' })
+  expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 50;' })).toBeDefined()
+  expect(await ui.find({ text: /ms · read-only/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'detail-up' })).toBeDefined()
+  for (let step = 0; step < 60; step++) await ui.press({ key: 'detail-down' })
+  expect(await ui.find({ text: /ms · read-only/ })).toBeDefined()
+  expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 50;' })).toBeUndefined()
 
-    // Wider than the room: a bar across, and its steps move the grid.
-    expect(await ui.find({ type: 'Button', key: 'detail-right' })).toBeDefined()
-    await ui.press({ key: 'detail-right' })
-    const moved = (await ui.findAll({ type: 'Box' })).some(box => typeof box.props.marginLeft === 'number' && box.props.marginLeft < 0)
-    expect(moved).toBe(true)
+  // Wider than the room: a bar across, and its steps move the grid.
+  expect(await ui.find({ type: 'Button', key: 'detail-right' })).toBeDefined()
+  await ui.press({ key: 'detail-right' })
+  const moved = (await ui.findAll({ type: 'Box' })).some(box => typeof box.props.marginLeft === 'number' && box.props.marginLeft < 0)
+  expect(moved).toBe(true)
 
-    // Another tab starts at the top left again.
-    await ui.press({ key: 'tab-columns' })
-    expect(await ui.find({ text: 'Name' })).toBeDefined()
-    await ui.unmount()
-  })
-}
+  // Another tab starts at the top left again.
+  await ui.press({ key: 'tab-columns' })
+  expect(await ui.find({ text: 'Name' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('on the desktop the panels stand whole and the body scrolls as one', async ($, on) => {
+  host(on, { DATABASE_URL: HOST_URL })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run(run(''))
+  const ui = await $.ui.mount(pane('desktop', 44, 36))
+
+  // Stacked: the object opens under its own row, the rest of the tree after
+  // it; every row of orders, and no bar down.
+  await ui.press({ key: 'r:env|sales.orders' })
+  expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 50;' })).toBeDefined()
+  expect(await ui.find({ text: /ms · read-only/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'detail-down' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'tree-down' })).toBeUndefined()
+  const order = (await ui.findAll({})).map(one => one.props.key).filter(key => key === 'r:env|sales.orders' || key === 'detail' || key === 'f:env|sales|views')
+  expect(order).toEqual(['r:env|sales.orders', 'detail', 'f:env|sales|views'])
+
+  // Tree rows are filled, never bordered, so they keep to one row each; the
+  // chevron folds with a press, in the line icon's thin glyph.
+  const rowBoxes = (await ui.findAll({ type: 'Box' })).filter(box => String(box.props.key ?? '').endsWith(':fill'))
+  expect(rowBoxes.length).toBeGreaterThan(5)
+  expect(rowBoxes.every(box => box.props.borderStyle === undefined)).toBe(true)
+  expect(rowBoxes.filter(box => box.props.backgroundColor !== undefined).map(box => box.props.key)).toEqual(['r:env|sales.orders:fill'])
+  expect((await ui.find({ type: 'Button', key: 's:env|sales:fold' }))?.text).toBe('⌄')
+  await ui.press({ key: 's:env|sales:fold' })
+  expect((await ui.find({ type: 'Button', key: 's:env|sales:fold' }))?.text).toBe('›')
+  await ui.press({ key: 's:env|sales:fold' })
+
+  // Across is still the pane's own, its bar over the grid.
+  await ui.press({ key: 'detail-right' })
+  const moved = (await ui.findAll({ type: 'Box' })).some(box => typeof box.props.marginLeft === 'number' && box.props.marginLeft < 0)
+  expect(moved).toBe(true)
+  await ui.unmount()
+
+  // Wide: an object opens at the row the window shows, beside the tree.
+  const wide = await $.ui.mount({ ...pane('desktop', 140, 30), props: { ...pane('desktop', 140, 30).props, scroll: { offset: 7, bodyRows: 30 } } })
+  await wide.press({ key: 'r:env|sales.customer' })
+  const detail = (await wide.findAll({ type: 'Box' })).find(box => box.props.key === 'detail')
+  expect(detail?.props.marginTop).toBe(7)
+  await wide.unmount()
+})
 
 test('a wheel moves the part under the pointer', () => {
   const layout: PaneLayout = {
     isWide: true,
+    isFlow: false,
     split: 40,
     across: 50,
     tree: { max: 30, page: 40 },
