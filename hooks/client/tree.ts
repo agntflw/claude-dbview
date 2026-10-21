@@ -21,8 +21,6 @@ export type Row = {
   /** undefined for a leaf; else whether its children show. */
   isOpen?: boolean
   isSelected?: boolean
-  /** A foreign key column: a press leads to the table it points at. */
-  isLink?: boolean
   onPress?: () => void
 }
 
@@ -182,8 +180,7 @@ export function listTree(view: DbView, act?: Actions): Row[] {
     const known = view.relations[relationKey(source, schema.name, relation.name)]?.columns
     if (!known) return [...out, { key: `${rid}:loading`, depth: 4, icon: 'column', label: '…' }]
 
-    // A foreign key column reads as a link does in a file tree, `name → target`,
-    // and a press follows it.
+    // A foreign key column looks as any other; a press follows it to its table.
     return [
       ...out,
       ...known.map(column => {
@@ -194,9 +191,8 @@ export function listTree(view: DbView, act?: Actions): Row[] {
           depth: 4,
           icon: (column.isPrimaryKey ? 'key' : column.references ? 'link' : 'column') as IconName,
           label: column.name,
-          meta: target ? `→ ${target.schema === schema.name ? target.name : `${target.schema}.${target.name}`}` : shortType(column.type),
+          meta: shortType(column.type),
           isMono: true,
-          isLink: target !== null,
           onPress: target && act ? () => void act.jump({ source, ...target }) : undefined,
         }
       }),

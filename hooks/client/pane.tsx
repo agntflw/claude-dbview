@@ -172,15 +172,13 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     ) : (
       <Text dimColor>○</Text>
     )
-  // A foreign key's target, pressed to open it; underlined under the pointer.
-  // The terminal wraps a Button's label that meets the panel's edge, so
-  // there it is held to its one row.
-  const link = (key: string, scope: string, label: string, source: string, to: DbRelationName) => (
+  // A foreign key leads to its table, as a link would, but looks like the
+  // text around it: the same Text, only pressable. The terminal wraps a
+  // Button's label that meets the panel's edge, so there it is held to one row.
+  const link = (key: string, text: RenderElement, source: string, to: DbRelationName) => (
     <Box flexShrink={1} overflow="hidden" height={isGraphic ? undefined : 1}>
-      <Button key={key} plain hover={{ scope, underline: true }} onPress={() => void act.jump({ source, ...to })}>
-        <Text mono size="footnote" color={COLOR.link} wrap="truncate-end">
-          {label}
-        </Text>
+      <Button key={key} plain onPress={() => void act.jump({ source, ...to })}>
+        {text}
       </Button>
     </Box>
   )
@@ -372,11 +370,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
           )}
         </Box>
         <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
-          {row.meta && row.isLink ? (
-            <Text mono color={COLOR.link} wrap="truncate-end">
-              {row.meta}
-            </Text>
-          ) : row.meta ? (
+          {row.meta ? (
             <Text dimColor mono={row.isMono} size={row.isMono ? undefined : 'footnote'} wrap="truncate-end">
               {row.meta}
             </Text>
@@ -484,27 +478,25 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     const typeWidth = Math.max(4, ...columns.map(column => column.type.length)) + 2
     const nullWidth = 10
     const keyWidth = Math.max('Key / reference'.length, ...columns.map(column => keyOf(column).length)) + 1
-    /** A line of a list; `key` and `scope` name its link, where it leads somewhere. */
-    type Def = { icon: IconName; name: string; text: string; key?: string; scope?: string; to?: DbRelationName | null }
+    /** A line of a list; `key` names its link, where it leads somewhere. */
+    type Def = { icon: IconName; name: string; text: string; key?: string; to?: DbRelationName | null }
     const defs: Def[] = [
-      ...detail.constraints.map((one, index) => ({
+      ...detail.constraints.map(one => ({
         icon: CONSTRAINT_ICON[one.kind],
         name: one.name,
         text: one.definition.replace('REFERENCES ', '→ '),
         key: `fk-def-${one.name}`,
-        scope: `fk-def-${index}`,
         to: one.target,
       })),
       ...(notNull.length > 0 ? [{ icon: 'notnull' as IconName, name: 'not null', text: notNull.join(', ') }] : []),
     ]
     const indexes: Def[] = detail.indexes.map(one => ({ icon: 'index', name: one.name, text: one.definition }))
     // The other end of the keys: who points here, each a press away.
-    const backlinks: Def[] = (detail.referencedBy ?? []).map((one, index) => ({
+    const backlinks: Def[] = (detail.referencedBy ?? []).map(one => ({
       icon: 'link',
       name: one.constraint,
       text: `← ${one.schema}.${one.name}(${one.columns.join(', ')})`,
       key: `ref-by-${one.schema}.${one.name}.${one.constraint}`,
-      scope: `ref-by-${index}`,
       to: { schema: one.schema, name: one.name },
     }))
     const listed = [...defs, ...indexes, ...backlinks]
@@ -549,24 +541,17 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
         </Text>
       </Box>
     )
-    // A line of a list; one that leads to another table has its target as a link.
+    // The text as is, pressable where it names a table to go to.
+    const withLink = (key: string, text: RenderElement, to: DbRelationName | null | undefined) => (to ? link(key, text, ref.source, to) : text)
+
+    // A line of a list; one that leads to another table is pressable, drawn the same.
     const defLine = (one: Def) => {
-      const arrow = one.to && one.key && one.scope ? one.text.search(/[→←] /) : -1
-      const text =
-        one.to && one.key && one.scope && arrow >= 0 ? (
-          <Box flexDirection="row" flexShrink={0}>
-            {arrow > 0 && (
-              <Text mono dimColor wrap="truncate-end">
-                {one.text.slice(0, arrow)}
-              </Text>
-            )}
-            {link(one.key, one.scope, one.text.slice(arrow), ref.source, one.to)}
-          </Box>
-        ) : (
-          <Text mono dimColor wrap="truncate-end">
-            {one.text}
-          </Text>
-        )
+      const plain = (
+        <Text mono dimColor wrap="truncate-end">
+          {one.text}
+        </Text>
+      )
+      const text = one.key ? withLink(one.key, plain, one.to) : plain
 
       return (
         <Box flexDirection="row" alignItems="center">
@@ -586,18 +571,20 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     }
 
     const lines: RenderElement[] = [cells(<Text> </Text>, head('Name'), head('Type'), head('Nullable'), head('Key / reference'), true)]
-    for (const [index, column] of columns.entries()) {
+    for (const column of columns) {
       const icon: IconName = column.isPrimaryKey ? 'key' : column.references ? 'link' : 'column'
       const key = column.isPrimaryKey ? (
         <Text dimColor size="footnote" wrap="truncate-end">
           primary key
         </Text>
-      ) : column.references && column.target ? (
-        link(`fk-${column.name}`, `fk-col-${index}`, `→ ${column.references}`, ref.source, column.target)
       ) : column.references ? (
-        <Text mono size="footnote" color={COLOR.link} wrap="truncate-end">
-          {`→ ${column.references}`}
-        </Text>
+        withLink(
+          `fk-${column.name}`,
+          <Text mono size="footnote" color={COLOR.link} wrap="truncate-end">
+            {`→ ${column.references}`}
+          </Text>,
+          column.target,
+        )
       ) : (
         <Text> </Text>
       )

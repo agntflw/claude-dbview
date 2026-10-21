@@ -347,8 +347,8 @@ for (const surface of ['desktop', 'terminal'] as const) {
     expect(await heading()).toBe('orders')
     expect(await ui.find({ type: 'Button', key: 'back' })).toBeUndefined()
 
-    // In the tree, the column reads `customer_id → customer` and follows it too.
-    expect(await ui.find({ text: '→ customer' })).toBeDefined()
+    // In the tree, the key column looks as any other (its type) and follows it too.
+    expect(await ui.find({ text: '→ customer' })).toBeUndefined()
     await ui.press({ key: 'r:env|sales.orders:customer_id' })
     expect(await heading()).toBe('customer')
     // Unfolded in the tree: its columns show, created_at in the tree's short type.
@@ -384,3 +384,30 @@ test('a jump unfolds the tree to its target and brings it into view', async ($, 
   expect(await ui.find({ type: 'Button', key: 'r:env|sales.orders' })).toBeDefined()
   await ui.unmount()
 })
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`a foreign key link looks exactly like the text around it (${surface})`, async ($, on) => {
+    host(on, { DATABASE_URL: HOST_URL })
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run(run(''))
+    const ui = await $.ui.mount(pane(surface, 140))
+    await ui.press({ key: 'r:env|sales.orders' })
+    await ui.press({ key: 'tab-columns' })
+
+    // A plain Button holding the very Text a plain line draws: no hover, no colour of its own.
+    const constraint = await ui.find({ type: 'Button', key: 'fk-def-orders_customer_id_fkey' })
+    const neighbour = (await ui.findAll({ type: 'Text' })).find(one => one.text === 'PRIMARY KEY (id)')
+    expect(constraint?.props).toEqual({ key: 'fk-def-orders_customer_id_fkey', label: 'FOREIGN KEY (customer_id) → sales.customer(id)', plain: true })
+    expect((constraint?.children[0] as { props: unknown }).props).toEqual(neighbour?.props)
+
+    // The Columns tab's reference keeps the style it had before it was a link.
+    const reference = await ui.find({ type: 'Button', key: 'fk-customer_id' })
+    expect(reference?.props.hover).toBeUndefined()
+    expect((reference?.children[0] as { props: unknown }).props).toEqual({ mono: true, size: 'footnote', color: '#6aa6ee', wrap: 'truncate-end' })
+
+    // The tree's key column shows its type, as every column does.
+    expect(await ui.find({ type: 'Button', key: 'r:env|sales.orders:customer_id' })).toBeDefined()
+    expect(await ui.find({ text: /^→ customer$/ })).toBeUndefined()
+    await ui.unmount()
+  })
+}

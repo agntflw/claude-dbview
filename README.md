@@ -85,7 +85,7 @@ Each database is a root of the tree, with its schemas as packages inside, then T
 - **Rows**: the first 50, 100, 500 or 1000 rows in key order, with the query shown.
 - **DDL**: the table as a migration would create it (its sequences, the table with defaults and named constraints, indexes, `OWNED BY`), numbered, with Copy.
 
-Foreign keys are links. Press a `→ schema.table(column)` reference, a foreign key constraint, a `← schema.table(column)` line under Referenced by, or a key column in the tree (it reads `customer_id → customer`), and the table at the other end opens on the same tab, unfolded and scrolled into view in the tree. **← name** at the top right goes back, one jump at a time.
+Foreign keys are links that look like plain text. Press a `→ schema.table(column)` reference, a foreign key constraint, a `← schema.table(column)` line under Referenced by, or a key column in the tree, and the table at the other end opens on the same tab, unfolded and scrolled into view in the tree. **← name** at the top right goes back, one jump at a time.
 
 Every Postgres container Docker is running shows up by itself, so the databases a migration test leaves behind (say `mig_before` and `mig_after`) sit side by side in the tree to compare.
 
