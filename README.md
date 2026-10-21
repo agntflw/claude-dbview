@@ -161,4 +161,4 @@ docker run -d --name mig_after  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=shop -p 
 
 ## License
 
-Free and open source under the MIT License. Copyright (c) 2026 AGENTFLOW, see [LICENSE](LICENSE).
+Free and open source under the MIT License. Copyright (c) 2026 [AGENTFLOW](https://agntflow.io), see [LICENSE](LICENSE).

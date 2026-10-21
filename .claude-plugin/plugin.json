@@ -4,7 +4,7 @@
   "description": "A PostgreSQL database view in a pane: every database and Postgres container as an IDE-style tree, with columns, constraints, rows and DDL.",
   "author": {
     "name": "AGENTFLOW",
-    "url": "https://github.com/agntflw"
+    "url": "https://agntflow.io"
   },
   "homepage": "https://github.com/agntflw/claude-dbview#readme",
   "repository": "https://github.com/agntflw/claude-dbview",
