@@ -71,10 +71,14 @@ def press(tree: dict, key: str) -> None:
     time.sleep(2)
 
 
-def scroll(offset: int, by: int) -> int:
+def scroll(offset: int, by: int, column: int = 10) -> int:
     return ask({'subtype': 'ui_scroll', 'surface': 'desktop', 'client_id': 'd1', 'component': 'Pane',
                 'instance_id': 'dbview', 'offset': offset, 'by': by, 'body_rows': 20, 'content_rows': 120,
-                'pointer': {'column': 10, 'row': 5}})['offset']
+                'pointer': {'column': column, 'row': 5}})['offset']
+
+
+def redraws() -> int:
+    return sum('"subtype":"ui_invalidate"' in line for line in list(lines))
 
 
 def check(what: str, got, want) -> None:
@@ -100,6 +104,16 @@ for offset, by in [(5, 5), (8, 3), (4, -4)]:
 
 press(draw(140, 6), 'r:env|sales.orders')
 check('wide: the table opens at the window, beside its row', find(draw(140, 6), 'detail')['props'].get('marginTop'), 6)
+
+# A wheel over the tree moves the page; once it rests, the table follows to the top.
+before = redraws()
+scroll(9, 3)
+time.sleep(1)
+check('wide: the pane asks for a redraw once the wheel rests', redraws() > before, True)
+check('wide: once the wheel rests, the table is at the top again', find(draw(140, 9), 'detail')['props'].get('marginTop'), 9)
+scroll(14, 5, column=90)
+time.sleep(1)
+check('wide: a wheel over the table leaves it where it is', find(draw(140, 14), 'detail')['props'].get('marginTop'), 9)
 
 press(draw(60, 0), 'r:env|sales.customer')
 keys = re.findall(r'"key": "([^"]+)"', json.dumps(draw(60, 0)))
