@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { scrolled } from '../hooks/client/pane'
+import { scrolled, shouldLift } from '../hooks/client/pane'
 import type { PaneLayout } from '../hooks/client/pane'
 import { EMPTY_VIEW } from '../hooks/client/state'
 import { callKey } from './call-key'
@@ -287,6 +287,20 @@ test('on the desktop the panels stand whole and the body scrolls as one', async 
   await wide.unmount()
 })
 
+test('on the desktop the open table comes to the top of the window once the wheel rests', () => {
+  // Opened at row 30, the tree scrolled back to the top: room above it, always.
+  expect(shouldLift(30, 0, 20, 40, 'tree')).toBe(true)
+  expect(shouldLift(30, 0, 20, 40, 'object')).toBe(true)
+  expect(shouldLift(30, 0, 20, 40)).toBe(true)
+  // Scrolled on past it: over the tree it follows, over the table it is read down.
+  expect(shouldLift(0, 12, 20, 40, 'tree')).toBe(true)
+  expect(shouldLift(0, 12, 20, 40, 'object')).toBe(false)
+  // No pointer said: it follows once less than half the window shows it.
+  expect(shouldLift(0, 12, 20, 40)).toBe(false)
+  expect(shouldLift(0, 35, 20, 40)).toBe(true)
+  expect(shouldLift(7, 7, 20, 40, 'tree')).toBe(false)
+})
+
 test('a wheel moves the part under the pointer', () => {
   const layout: PaneLayout = {
     isWide: true,
@@ -296,6 +310,7 @@ test('a wheel moves the part under the pointer', () => {
     tree: { max: 30, page: 40 },
     detail: { max: 100, page: 40 },
     left: { max: 60, page: 70 },
+    objectRows: 60,
     for: 'env|sales.orders:rows',
   }
   const view = { ...EMPTY_VIEW, scroll: { tree: 0, detail: 0, left: 0, for: 'env|sales.orders:rows' } }

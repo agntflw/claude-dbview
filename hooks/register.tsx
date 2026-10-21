@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import { createActions } from './client/actions'
-import { detailForOf, drawPane, scrolled } from './client/pane'
+import { detailForOf, drawPane, scrolled, shouldLift } from './client/pane'
 import type { PaneLayout } from './client/pane'
 import { EMPTY_VIEW } from './client/state'
 import { forgetUrl, parseUrl, saveUrl } from './engine/connection'
@@ -164,17 +164,20 @@ export const register: Register = (on, options) => {
   // On the terminal the pane scrolls its tree and its open object itself,
   // each in a window of its own, so the body never moves: the wheel moves the
   // part under it. A graphical surface has moved the body already: let it.
-  // Wide, once a wheel over the tree rests, the open object comes to the top
-  // of the window: it moves once, after the scroll, never during it.
+  // Wide, once the wheel rests, the open object comes to the top of the
+  // window: it moves once, after the scroll, never during it.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const now = layout
-    if (now?.isFlow && now.isWide && e.pointer && e.pointer.column < now.split) {
+    if (now?.isFlow && now.isWide && now.objectRows > 0) {
       const tick = ++settling
       const top = Math.min(Math.max(0, e.offset), Math.max(0, e.contentRows - e.bodyRows))
+      const over = e.pointer === undefined ? undefined : e.pointer.column < now.split ? 'tree' : 'object'
       $.clock.after(SETTLE_MS, () => {
-        if (tick !== settling || !opened || opened.top === top) return
-        opened = { ...opened, top }
-        $.ui.invalidate('ui.render')
+        if (tick !== settling || !opened) return
+        if (shouldLift(opened.top, top, e.bodyRows, now.objectRows, over)) {
+          opened = { ...opened, top }
+          $.ui.invalidate('ui.render')
+        }
       })
     }
     if (!now || now.isFlow) return next(e)

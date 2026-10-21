@@ -71,10 +71,11 @@ def press(tree: dict, key: str) -> None:
     time.sleep(2)
 
 
-def scroll(offset: int, by: int, column: int = 10) -> int:
+def scroll(offset: int, by: int, column: int | None = 10) -> int:
+    pointer = {} if column is None else {'pointer': {'column': column, 'row': 5}}
     return ask({'subtype': 'ui_scroll', 'surface': 'desktop', 'client_id': 'd1', 'component': 'Pane',
                 'instance_id': 'dbview', 'offset': offset, 'by': by, 'body_rows': 20, 'content_rows': 120,
-                'pointer': {'column': column, 'row': 5}})['offset']
+                **pointer})['offset']
 
 
 def redraws() -> int:
@@ -114,6 +115,17 @@ check('wide: once the wheel rests, the table is at the top again', find(draw(140
 scroll(14, 5, column=90)
 time.sleep(1)
 check('wide: a wheel over the table leaves it where it is', find(draw(140, 14), 'detail')['props'].get('marginTop'), 9)
+
+# Opened far down, then scrolled back up: never a gap above the table, wherever
+# the pointer was, or with none said (the desktop leaves it out for its scrollbar).
+for column, where in [(None, 'no pointer'), (90, 'over the table'), (10, 'over the tree')]:
+    press(draw(140, 14), 'r:env|sales.customer')
+    press(draw(140, 14), 'r:env|sales.orders')
+    check(f'wide: opened far down ({where}), the table stands there', find(draw(140, 14), 'detail')['props'].get('marginTop'), 14)
+    for offset in [10, 6, 2, 0]:
+        scroll(offset, -4, column=column)
+    time.sleep(1)
+    check(f'wide: back at the top ({where}), the table is at the top too', find(draw(140, 0), 'detail')['props'].get('marginTop'), 0)
 
 press(draw(60, 0), 'r:env|sales.customer')
 keys = re.findall(r'"key": "([^"]+)"', json.dumps(draw(60, 0)))

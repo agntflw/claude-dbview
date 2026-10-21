@@ -68,6 +68,8 @@ export type PaneLayout = {
   tree: Span
   detail: Span
   left: Span
+  /** The rows the open object's panel takes, about, where it stands whole (none open: 0). */
+  objectRows: number
   /** The object and tab the detail's offsets belong to. */
   for: string
 }
@@ -732,6 +734,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
   }
 
   let detailSpan: Span = { max: 0, page: 1 }
+  let objectRows = 0
   let leftSpan: Span = { max: 0, page: sectionCols }
 
   function detailPanel(ref: DbRef) {
@@ -769,7 +772,9 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     const lines = section?.lines ?? []
     const leftMax = Math.max(0, (section?.cols ?? 0) - sectionCols)
     const toolbarRows = section?.toolbar ? section.toolbarRows + 1 : 0
-    const fit = isFlow ? lines.length : Math.max(3, detailRows - edgeRows - 2 - 1 - framedRows - 1 - toolbarRows - edgeRows - (leftMax > 0 ? 1 : 0))
+    const chrome = edgeRows + 2 + 1 + framedRows + 1 + toolbarRows + edgeRows + (leftMax > 0 ? 1 : 0)
+    objectRows = Math.max(detailRows, lines.length + chrome)
+    const fit = isFlow ? lines.length : Math.max(3, detailRows - chrome)
     detailSpan = { max: Math.max(0, lines.length - fit), page: fit }
     leftSpan = { max: leftMax, page: sectionCols }
     const top = Math.min(scroll.detail, detailSpan.max)
@@ -898,6 +903,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     tree,
     detail: detailSpan,
     left: leftSpan,
+    objectRows,
     for: detailFor,
   }
 
@@ -920,6 +926,21 @@ export function scrolled(view: DbView, layout: PaneLayout, by: number, pointer?:
   const step = part === 'left' ? by * 4 : pointer ? by * 3 : by
 
   return { ...now, [part]: clamp(now[part] + step, 0, layout[part].max), for: layout.for }
+}
+
+/**
+ * Whether the open object, standing at body row `at`, moves to the window's
+ * top row `top` once the wheel rests. Always when there is room above it.
+ * Otherwise when the wheel was over the tree, or, where the surface did not
+ * say where the pointer was, once less than half the window still shows it:
+ * a wheel over the object reads it down, and that is left be.
+ */
+export function shouldLift(at: number, top: number, bodyRows: number, objectRows: number, over?: 'tree' | 'object'): boolean {
+  if (at === top) return false
+  if (at > top) return true
+  if (over !== undefined) return over === 'tree'
+
+  return at + objectRows - top < bodyRows / 2
 }
 
 /** The object and tab open, which the detail's offsets belong to; empty with none. */
