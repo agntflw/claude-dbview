@@ -1,6 +1,41 @@
 # dbview
 
-A PostgreSQL database view for Claude Code, in a pane beside the chat. It shows your databases the way an IDE's explorer shows data sources: each database is a root, with its schemas as packages inside, then Tables, Views, Materialized views, Sequences and Functions folders, then the objects and their columns. Open a table or view to see:
+A PostgreSQL database view for Claude Code, in a pane beside the chat: every database and Postgres container as an IDE-style tree, with columns, constraints, rows and DDL. Read-only.
+
+| Rows | Columns | DDL |
+|---|---|---|
+| [![Rows tab](docs/images/rows.png)](docs/images/rows.png) | [![Columns tab](docs/images/columns.png)](docs/images/columns.png) | [![DDL tab](docs/images/ddl.png)](docs/images/ddl.png) |
+
+<sub>Design mockups of the pane on the desktop app. The pane draws the same layout with the surface's own elements; on the terminal it uses glyphs and no borders.</sub>
+
+## Quick start
+
+1. Install, once, for every project (user scope):
+
+   ```
+   claude plugin install dbview --marketplace agntflw/claude-dbview
+   ```
+
+2. In any Claude Code session, type `/db`. The pane opens on the databases it finds: your `DATABASE_URL` or `PG*` variables, and every running Postgres container.
+3. To add another one: `/db connect postgres://user:password@host:5432/database [name]`.
+4. Press a database, then a table. Switch between Columns, Rows (pick 50, 100, 500 or 1000) and DDL.
+
+### Or let Claude install it
+
+Download or clone this repository, then paste this to Claude Code, with the folder's path filled in:
+
+```
+Install the Claude Code plugin in <path to the claude-dbview folder> globally for me:
+1. Run: claude plugin install dbview --marketplace "<that path>" --scope user --config psql_path=psql
+2. Run: claude plugin list, and check dbview is installed and enabled.
+3. Check what it needs: psql --version, and docker --version if I use Postgres in Docker.
+   Tell me what is missing and how to install it on this machine, but do not install it.
+4. Tell me to start a new session and type /db.
+```
+
+## What it shows
+
+Each database is a root of the tree, with its schemas as packages inside, then Tables, Views, Materialized views, Sequences and Functions folders, then the objects and their columns. Open a table or view to see:
 
 - **Columns**: name, type, nullable, primary key or `→ schema.table(column)` reference, defaults, then the constraints (keys, foreign keys, checks, not null) and indexes.
 - **Rows**: the first 50, 100, 500 or 1000 rows in key order, with the query shown.
@@ -10,7 +45,7 @@ Every Postgres container Docker is running shows up by itself, so the databases 
 
 Everything is read-only: each request runs in a read-only session with a 10 second statement timeout.
 
-## Install
+## Install, in detail
 
 At the prompt of a terminal session:
 
