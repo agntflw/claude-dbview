@@ -83,6 +83,25 @@ if (relation.ok) {
   check('constraints: the key, then the foreign key', constraints.map(k => `${k.name}:${k.kind}`).join() === 'orders_pkey:primary,orders_customer_id_fkey:foreign', constraints)
   check('the foreign key reads as Postgres prints it', constraints[1]?.definition === 'FOREIGN KEY (customer_id) REFERENCES sales.customer(id)', constraints[1])
   check('indexes: orders_pkey UNIQUE btree (id)', indexes.map(i => `${i.name} ${i.definition}`).join() === 'orders_pkey UNIQUE btree (id)', indexes)
+  check('customer_id leads to sales.customer', columns[1]?.target?.schema === 'sales' && columns[1]?.target?.name === 'customer', columns[1])
+  check('the foreign key leads there too', constraints[1]?.target?.name === 'customer' && constraints[0]?.target === null, constraints)
+  check('nothing points at orders', relation.value.referencedBy?.length === 0, relation.value.referencedBy)
+}
+
+// The other end of the key: who points at customer, to jump back.
+const customer = await engine.request({ op: 'relation', source: 'env', schema: 'sales', name: 'customer' })
+check('customer answers', customer.ok, customer)
+if (customer.ok) {
+  const back = customer.value.referencedBy ?? []
+  check(
+    'customer is referenced by sales.orders(customer_id)',
+    back.length === 1 && back[0]?.constraint === 'orders_customer_id_fkey' && back[0]?.schema === 'sales' && back[0]?.name === 'orders' && back[0]?.columns.join() === 'customer_id',
+    back,
+  )
+}
+for (const source of ['docker:mig_after', 'docker:mig_before']) {
+  const other = await engine.request({ op: 'relation', source, schema: 'sales', name: 'customer' })
+  check(`${source} customer answers`, other.ok && other.value.referencedBy?.length === 1, other)
 }
 
 const columns = ['id', 'customer_id', 'total', 'status', 'note']

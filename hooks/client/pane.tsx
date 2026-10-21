@@ -1,15 +1,13 @@
 import type { ElementConstructor, Elements, RenderElement } from 'claude-code'
 
 import type {
-  DbCatalog,
   DbColumn,
   DbConstraint,
-  DbIndex,
   DbPreview,
   DbRef,
   DbRelation,
   DbRelationDetail,
-  DbSchema,
+  DbRelationName,
   DbRowLimit,
   DbScroll,
   DbSource,
@@ -20,13 +18,16 @@ import { ROW_LIMITS } from './actions'
 import type { Actions } from './actions'
 import { COLOR, SPACER_SVG, glyphOf, lineSvg, tileSvg } from './icons'
 import type { IconName } from './icons'
-import { EMPTY_SCROLL, folderId, relationId, relationKey, schemaId, sourceId } from './state'
+import { EMPTY_SCROLL, relationKey, sourceId } from './state'
+import { KIND_ICON, compact, listTree, stateOf } from './tree'
+import type { Row } from './tree'
 
 // The client side: draws the pane from the view, on whichever surface asks.
 // Two panels, as the Claude desktop sidebar sits beside its content: the tree
 // (data source, schema, kind folder, object, column) and the open object.
 // Side by side when the pane is wide, stacked when it is narrow; each panel
 // scrolls on its own, the open object across as well, with its own bars.
+// A foreign key is a link: a press opens the table it points at.
 // Nothing here reaches a database.
 
 type Table = Elements['terminal']
@@ -73,41 +74,6 @@ const TREE_MAX = 52
 const CELL_MAX = 40
 /** A graphical surface's rows are drawn in pixels: place a few more than counted, the panel clips them. */
 const SLACK = 6
-
-type Row = {
-  key: string
-  depth: number
-  icon: IconName
-  isTile?: boolean
-  label: string
-  meta?: string
-  isMono?: boolean
-  isError?: boolean
-  /** A connection's state, drawn as a dot at the right. */
-  dot?: 'connected' | 'idle' | 'error'
-  /** undefined for a leaf; else whether its children show. */
-  isOpen?: boolean
-  isSelected?: boolean
-  onPress?: () => void
-}
-
-type Folder = { id: string; label: string; kinds: DbRelation['kind'][] }
-
-const FOLDERS: Folder[] = [
-  { id: 'tables', label: 'Tables', kinds: ['table', 'partitioned', 'foreign'] },
-  { id: 'views', label: 'Views', kinds: ['view'] },
-  { id: 'matviews', label: 'Materialized views', kinds: ['matview'] },
-  { id: 'sequences', label: 'Sequences', kinds: ['sequence'] },
-]
-
-const KIND_ICON: Record<DbRelation['kind'], IconName> = {
-  table: 'table',
-  partitioned: 'table',
-  foreign: 'table',
-  view: 'view',
-  matview: 'matview',
-  sequence: 'sequence',
-}
 
 const KIND_WORD: Record<DbRelation['kind'], string> = {
   table: 'table',
@@ -191,8 +157,18 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     ) : (
       <Text dimColor>○</Text>
     )
-  const stateOf = (source: DbSource): Row['dot'] =>
-    view.status[source.id]?.phase === 'error' ? 'error' : view.catalogs[source.id] ? 'connected' : 'idle'
+  // A foreign key's target, pressed to open it; underlined under the pointer.
+  // The terminal wraps a Button's label that meets the panel's edge, so
+  // there it is held to its one row.
+  const link = (key: string, scope: string, label: string, source: string, to: DbRelationName) => (
+    <Box flexShrink={1} overflow="hidden" height={isGraphic ? undefined : 1}>
+      <Button key={key} plain hover={{ scope, underline: true }} onPress={() => void act.jump({ source, ...to })}>
+        <Text mono size="footnote" color={COLOR.link} wrap="truncate-end">
+          {label}
+        </Text>
+      </Button>
+    </Box>
+  )
 
   const detailFor = view.selected ? `${relationKey(view.selected.source, view.selected.schema, view.selected.name)}:${view.tab}` : ''
   const scroll = scrollOf(view, detailFor)
@@ -289,7 +265,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
             {where}
           </Text>
         </Box>
-        {shown && dotOf(stateOf(shown))}
+        {shown && dotOf(stateOf(view, shown))}
       </Box>
       <Box flexShrink={0}>
         <Button key="refresh" label={Svg ? 'Refresh' : '↻'} hotkey={keyOf('r')} plain dimColor onPress={() => void act.refresh()} />
@@ -314,145 +290,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   })()
 
   const filter = view.filter.trim().toLowerCase()
-  const rows = view.sources.flatMap(source => sourceRows(source))
-
-  function sourceRows(source: DbSource): Row[] {
-    const out: Row[] = []
-    const cid = sourceId(source.id)
-    const catalog = view.catalogs[source.id]
-    const status = view.status[source.id]
-    const isOpen = view.expanded.includes(cid)
-    out.push({
-      key: cid,
-      depth: 0,
-      icon: 'database',
-      isTile: true,
-      label: source.label,
-      meta: status?.phase === 'loading' ? '…' : [source.port ? `:${source.port}` : '', source.origin === 'docker' ? 'docker' : ''].filter(Boolean).join(' · '),
-      dot: stateOf(source),
-      isOpen,
-      onPress: () => void act.toggleSource(source.id),
-    })
-    if (!isOpen) return out
-    if (status?.phase === 'error') {
-      out.push({ key: `${cid}:error`, depth: 1, icon: 'column', label: status.error, isError: true })
-
-      return out
-    }
-    if (catalog) out.push(...catalogRows(source.id, catalog))
-
-    return out
-  }
-
-  function catalogRows(source: string, value: DbCatalog): Row[] {
-    const out: Row[] = []
-    const isOpen = (id: string) => filter !== '' || view.expanded.includes(id)
-
-    for (const schema of value.schemas) {
-      const relations = schema.relations.filter(relation => matches(source, schema, relation))
-      const routines = schema.routines.filter(routine => filter === '' || routine.name.toLowerCase().includes(filter))
-      if (filter !== '' && relations.length + routines.length === 0) continue
-
-      const sid = schemaId(source, schema.name)
-      out.push({
-        key: sid,
-        depth: 1,
-        icon: 'schema',
-        label: schema.name,
-        meta: String(relations.length + routines.length),
-        isOpen: isOpen(sid),
-        onPress: () => void act.toggle(sid),
-      })
-      if (!isOpen(sid)) continue
-
-      for (const folder of FOLDERS) {
-        const items = relations.filter(relation => folder.kinds.includes(relation.kind))
-        if (items.length === 0) continue
-        const fid = folderId(source, schema.name, folder.id)
-        out.push({
-          key: fid,
-          depth: 2,
-          icon: 'folder',
-          label: folder.label,
-          meta: String(items.length),
-          isOpen: isOpen(fid),
-          onPress: () => void act.toggle(fid),
-        })
-        if (isOpen(fid)) for (const relation of items) out.push(...relationRows(source, schema, relation))
-      }
-
-      if (routines.length > 0) {
-        const fid = folderId(source, schema.name, 'functions')
-        out.push({
-          key: fid,
-          depth: 2,
-          icon: 'folder',
-          label: 'Functions',
-          meta: String(routines.length),
-          isOpen: isOpen(fid),
-          onPress: () => void act.toggle(fid),
-        })
-        if (isOpen(fid)) {
-          for (const [index, routine] of routines.entries()) {
-            out.push({
-              key: `p:${source}|${schema.name}.${routine.name}:${index}`,
-              depth: 3,
-              icon: 'function',
-              isTile: true,
-              label: `${routine.name}(${routine.args})`,
-              meta: routine.returns,
-            })
-          }
-        }
-      }
-    }
-
-    return out
-  }
-
-  function matches(source: string, schema: DbSchema, relation: DbRelation): boolean {
-    if (filter === '') return true
-    if (relation.name.toLowerCase().includes(filter)) return true
-    const known = view.relations[relationKey(source, schema.name, relation.name)]?.columns ?? []
-
-    return known.some(column => column.name.toLowerCase().includes(filter))
-  }
-
-  function relationRows(source: string, schema: DbSchema, relation: DbRelation): Row[] {
-    const rid = relationId(source, schema.name, relation.name)
-    const ref: DbRef = { source, schema: schema.name, name: relation.name, kind: relation.kind }
-    const isLeaf = relation.kind === 'sequence'
-    const isOpen = !isLeaf && view.expanded.includes(rid)
-    const out: Row[] = [
-      {
-        key: rid,
-        depth: 3,
-        icon: KIND_ICON[relation.kind],
-        isTile: true,
-        label: relation.name,
-        meta: relation.rows === null ? undefined : compact(relation.rows),
-        isOpen: isLeaf ? undefined : isOpen,
-        isSelected: view.selected !== null && sameRef(view.selected, ref),
-        onPress: () => void act.pressRelation(ref),
-      },
-    ]
-    if (!isOpen) return out
-
-    const known = view.relations[relationKey(source, schema.name, relation.name)]?.columns
-    if (!known) return [...out, { key: `${rid}:loading`, depth: 4, icon: 'column', label: '…' }]
-
-    return [
-      ...out,
-      ...known.map(column => ({
-        key: `${rid}:${column.name}`,
-        depth: 4,
-        icon: (column.isPrimaryKey ? 'key' : column.references ? 'link' : 'column') as IconName,
-        label: column.name,
-        meta: shortType(column.type),
-        isMono: true,
-      })),
-    ]
-  }
+  const rows = listTree(view, act)
 
   // A tree row. The name keeps its room and the count or type at the right
   // gives way first; what still does not fit is cut at the panel's edge.
@@ -518,7 +356,11 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
           )}
         </Box>
         <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
-          {row.meta ? (
+          {row.meta && row.isLink ? (
+            <Text mono color={COLOR.link} wrap="truncate-end">
+              {row.meta}
+            </Text>
+          ) : row.meta ? (
             <Text dimColor mono={row.isMono} size={row.isMono ? undefined : 'footnote'} wrap="truncate-end">
               {row.meta}
             </Text>
@@ -605,7 +447,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   // The section's room: the panel less its padding, the well's, the bar and its gap.
   const sectionCols = Math.max(20, detailCols - padCols - padCols - 2)
 
-  function columnsSection(detail: DbRelationDetail): Section {
+  function columnsSection(detail: DbRelationDetail, ref: DbRef): Section {
     const columns = detail.columns
     const notNull = columns.filter(column => column.notNull && !column.isPrimaryKey).map(column => column.name)
     const keyOf = (column: DbColumn) => (column.isPrimaryKey ? 'primary key' : column.references ? `→ ${column.references}` : '')
@@ -613,16 +455,35 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     const typeWidth = Math.max(4, ...columns.map(column => column.type.length)) + 2
     const nullWidth = 10
     const keyWidth = Math.max('Key / reference'.length, ...columns.map(column => keyOf(column).length)) + 1
-    const defs = [
-      ...detail.constraints.map(one => ({ icon: CONSTRAINT_ICON[one.kind], name: one.name, text: one.definition.replace('REFERENCES ', '→ ') })),
+    /** A line of a list; `key` and `scope` name its link, where it leads somewhere. */
+    type Def = { icon: IconName; name: string; text: string; key?: string; scope?: string; to?: DbRelationName | null }
+    const defs: Def[] = [
+      ...detail.constraints.map((one, index) => ({
+        icon: CONSTRAINT_ICON[one.kind],
+        name: one.name,
+        text: one.definition.replace('REFERENCES ', '→ '),
+        key: `fk-def-${one.name}`,
+        scope: `fk-def-${index}`,
+        to: one.target,
+      })),
       ...(notNull.length > 0 ? [{ icon: 'notnull' as IconName, name: 'not null', text: notNull.join(', ') }] : []),
     ]
-    const indexes = detail.indexes.map(one => ({ icon: 'index' as IconName, name: one.name, text: one.definition }))
-    const defName = Math.max(8, ...[...defs, ...indexes].map(one => one.name.length)) + 2
+    const indexes: Def[] = detail.indexes.map(one => ({ icon: 'index', name: one.name, text: one.definition }))
+    // The other end of the keys: who points here, each a press away.
+    const backlinks: Def[] = (detail.referencedBy ?? []).map((one, index) => ({
+      icon: 'link',
+      name: one.constraint,
+      text: `← ${one.schema}.${one.name}(${one.columns.join(', ')})`,
+      key: `ref-by-${one.schema}.${one.name}.${one.constraint}`,
+      scope: `ref-by-${index}`,
+      to: { schema: one.schema, name: one.name },
+    }))
+    const listed = [...defs, ...indexes, ...backlinks]
+    const defName = Math.max(8, ...listed.map(one => one.name.length)) + 2
     const cols = Math.max(
       3 + nameWidth + typeWidth + nullWidth + keyWidth,
       ...columns.map(column => (column.default === null ? 0 : 3 + 8 + column.default.length)),
-      ...[...defs, ...indexes].map(one => 3 + defName + one.text.length),
+      ...listed.map(one => 3 + defName + one.text.length),
     )
 
     const cells = (icon: RenderElement, name: RenderElement, type: RenderElement, nullable: RenderElement, key: RenderElement, isHead = false) => (
@@ -659,33 +520,53 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         </Text>
       </Box>
     )
-    const defLine = (one: { icon: IconName; name: string; text: string }) => (
-      <Box flexDirection="row" alignItems="center">
-        <Box width={3} flexShrink={0}>
-          {line(one.icon, accentOf(one.icon))}
-        </Box>
-        <Box width={defName} flexShrink={0}>
-          <Text mono wrap="truncate-end">
-            {one.name}
-          </Text>
-        </Box>
-        <Box width={one.text.length + 1} flexShrink={0}>
+    // A line of a list; one that leads to another table has its target as a link.
+    const defLine = (one: Def) => {
+      const arrow = one.to && one.key && one.scope ? one.text.search(/[→←] /) : -1
+      const text =
+        one.to && one.key && one.scope && arrow >= 0 ? (
+          <Box flexDirection="row" flexShrink={0}>
+            {arrow > 0 && (
+              <Text mono dimColor wrap="truncate-end">
+                {one.text.slice(0, arrow)}
+              </Text>
+            )}
+            {link(one.key, one.scope, one.text.slice(arrow), ref.source, one.to)}
+          </Box>
+        ) : (
           <Text mono dimColor wrap="truncate-end">
             {one.text}
           </Text>
+        )
+
+      return (
+        <Box flexDirection="row" alignItems="center">
+          <Box width={3} flexShrink={0}>
+            {line(one.icon, accentOf(one.icon))}
+          </Box>
+          <Box width={defName} flexShrink={0}>
+            <Text mono wrap="truncate-end">
+              {one.name}
+            </Text>
+          </Box>
+          <Box width={one.text.length + 1} flexShrink={0}>
+            {text}
+          </Box>
         </Box>
-      </Box>
-    )
+      )
+    }
 
     const lines: RenderElement[] = [cells(<Text> </Text>, head('Name'), head('Type'), head('Nullable'), head('Key / reference'), true)]
-    for (const column of columns) {
+    for (const [index, column] of columns.entries()) {
       const icon: IconName = column.isPrimaryKey ? 'key' : column.references ? 'link' : 'column'
       const key = column.isPrimaryKey ? (
-        <Text dimColor size="footnote">
+        <Text dimColor size="footnote" wrap="truncate-end">
           primary key
         </Text>
+      ) : column.references && column.target ? (
+        link(`fk-${column.name}`, `fk-col-${index}`, `→ ${column.references}`, ref.source, column.target)
       ) : column.references ? (
-        <Text mono size="footnote" color={COLOR.link}>
+        <Text mono size="footnote" color={COLOR.link} wrap="truncate-end">
           {`→ ${column.references}`}
         </Text>
       ) : (
@@ -721,6 +602,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     }
     if (defs.length > 0) lines.push(blank(), title('Constraints', defs.length), ...defs.map(defLine))
     if (indexes.length > 0) lines.push(blank(), title('Indexes', indexes.length), ...indexes.map(defLine))
+    if (backlinks.length > 0) lines.push(blank(), title('Referenced by', backlinks.length), ...backlinks.map(defLine))
 
     return { lines, cols, toolbarRows: 0 }
   }
@@ -851,7 +733,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
 
     const section: Section | undefined = (() => {
       if (view.detailStatus.phase === 'error') return { lines: [<Text color="error">{view.detailStatus.error}</Text>], cols: 0, toolbarRows: 0 }
-      if (view.tab === 'columns' && known) return columnsSection(known)
+      if (view.tab === 'columns' && known) return columnsSection(known, ref)
       if (view.tab === 'rows' && view.preview) return rowsSection(view.preview, relation?.rows ?? null)
       if (view.tab === 'ddl' && view.ddl !== null) return ddlSection(view.ddl)
       if (view.detailStatus.phase === 'loading') return { lines: [<Text dimColor>Loading…</Text>], cols: 0, toolbarRows: 0 }
@@ -897,18 +779,31 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     )
     const contentCols = section?.code ? sectionCols : Math.max(section?.cols ?? 0, sectionCols)
 
+    // Back, after a jump: to the object it left, named, at the header's right.
+    const behind = (view.trail ?? [])[(view.trail ?? []).length - 1]
+    const backButton = behind && (
+      <Box flexShrink={0}>
+        <Button key="back" plain dimColor hotkey={keyOf('b')} onPress={() => void act.back()}>
+          {`← ${behind.name}`}
+        </Button>
+      </Box>
+    )
+
     return (
       <Box flexDirection="column" gap={1} width={isWide ? detailCols : undefined} height={detailRows} flexGrow={1} overflow="hidden" {...panel}>
-        <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
-          {tile(KIND_ICON[ref.kind], 32)}
-          <Box flexDirection="column" flexShrink={1} overflow="hidden">
-            <Text size="heading" weight="semibold" wrap="truncate-end">
-              {ref.name}
-            </Text>
-            <Text dimColor size="footnote" wrap="truncate-end">
-              {facts.join(' · ')}
-            </Text>
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} overflow="hidden">
+          <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
+            {tile(KIND_ICON[ref.kind], 32)}
+            <Box flexDirection="column" flexShrink={1} overflow="hidden">
+              <Text size="heading" weight="semibold" wrap="truncate-end">
+                {ref.name}
+              </Text>
+              <Text dimColor size="footnote" wrap="truncate-end">
+                {facts.join(' · ')}
+              </Text>
+            </Box>
           </Box>
+          {backButton}
         </Box>
         <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} overflow="hidden">
           {track(
@@ -1012,38 +907,15 @@ function shownSource(view: DbView): DbSource | undefined {
   return open ?? view.sources.find(one => one.id === view.selected?.source) ?? view.sources[0]
 }
 
-function sameRef(a: DbRef, b: DbRef): boolean {
-  return a.source === b.source && a.schema === b.schema && a.name === b.name
-}
-
 /** `16.4 (Debian 16.4-1)` → `16`. */
 function major(version: string): string {
   return version.split(/[ .]/)[0] ?? version
-}
-
-/** The tree's short spelling of a type: `timestamp with time zone` → `timestamptz`. */
-function shortType(type: string): string {
-  return type
-    .replace('timestamp with time zone', 'timestamptz')
-    .replace('timestamp without time zone', 'timestamp')
-    .replace('time with time zone', 'timetz')
-    .replace('time without time zone', 'time')
-    .replace('character varying', 'varchar')
-    .replace(/^character\b/, 'char')
-    .replace('double precision', 'float8')
 }
 
 function cellText(cell: string | null): string {
   if (cell === null) return 'NULL'
 
   return cell.replace(/\r?\n/g, '↵').replace(/\t/g, ' ')
-}
-
-function compact(n: number): string {
-  if (n < 1_000) return String(n)
-  if (n < 1_000_000) return `${Math.round(n / 100) / 10}k`
-
-  return `${Math.round(n / 100_000) / 10}M`
 }
 
 function clamp(n: number, low: number, high: number): number {

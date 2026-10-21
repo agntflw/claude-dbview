@@ -60,13 +60,14 @@ select json_build_object(
       'notNull', a.attnotnull,
       'default', pg_get_expr(d.adbin, d.adrelid),
       'isPrimaryKey', coalesce(a.attnum = any(pk.conkey), false),
-      'references', fk.target
+      'references', fk.target,
+      'target', case when fk.target is not null then json_build_object('schema', fk.schema, 'name', fk.name) end
     ) order by a.attnum)
     from pg_attribute a
     left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
     left join pg_constraint pk on pk.conrelid = a.attrelid and pk.contype = 'p'
     left join lateral (
-      select format('%s.%s(%s)', rn.nspname, r.relname, ra.attname) as target
+      select format('%s.%s(%s)', rn.nspname, r.relname, ra.attname) as target, rn.nspname as schema, r.relname as name
       from pg_constraint f
       join pg_class r on r.oid = f.confrelid
       join pg_namespace rn on rn.oid = r.relnamespace
@@ -83,10 +84,31 @@ select json_build_object(
       'kind', case k.contype
         when 'p' then 'primary' when 'u' then 'unique' when 'f' then 'foreign' when 'c' then 'check'
         when 'x' then 'exclusion' when 't' then 'trigger' else 'notnull' end,
-      'definition', pg_get_constraintdef(k.oid, true)
+      'definition', pg_get_constraintdef(k.oid, true),
+      'target', case when k.contype = 'f' then (
+        select json_build_object('schema', rn.nspname, 'name', r.relname)
+        from pg_class r join pg_namespace rn on rn.oid = r.relnamespace
+        where r.oid = k.confrelid
+      ) end
     ) order by position(k.contype::text in 'pufcxtn'), k.conname)
     from pg_constraint k
     where k.conrelid = (select oid from rel) and k.contype <> 'n'
+  ), '[]'::json),
+  'referencedBy', coalesce((
+    select json_agg(json_build_object(
+      'constraint', k.conname,
+      'schema', sn.nspname,
+      'name', s.relname,
+      'columns', (
+        select json_agg(sa.attname order by u.ord)
+        from unnest(k.conkey) with ordinality u(attnum, ord)
+        join pg_attribute sa on sa.attrelid = k.conrelid and sa.attnum = u.attnum
+      )
+    ) order by sn.nspname, s.relname, k.conname)
+    from pg_constraint k
+    join pg_class s on s.oid = k.conrelid
+    join pg_namespace sn on sn.oid = s.relnamespace
+    where k.confrelid = (select oid from rel) and k.contype = 'f'
   ), '[]'::json),
   'indexes', coalesce((
     select json_agg(json_build_object(

@@ -42,6 +42,9 @@ export type DbCatalog = {
   schemas: DbSchema[]
 }
 
+/** A relation of the same database, by name: where a foreign key leads. */
+export type DbRelationName = { schema: string; name: string }
+
 export type DbColumn = {
   name: string
   type: string
@@ -50,6 +53,8 @@ export type DbColumn = {
   isPrimaryKey: boolean
   /** The column a foreign key points at: `sales.customer(id)`. */
   references: string | null
+  /** The relation `references` names, to jump to. Absent in a detail kept from before 0.4.0. */
+  target?: DbRelationName | null
 }
 
 export type DbConstraint = {
@@ -57,13 +62,24 @@ export type DbConstraint = {
   kind: 'primary' | 'unique' | 'foreign' | 'check' | 'exclusion' | 'trigger' | 'notnull'
   /** As Postgres prints it: `PRIMARY KEY (id)`, `FOREIGN KEY (customer_id) REFERENCES sales.customer(id)`. */
   definition: string
+  /** A foreign key's referenced relation, to jump to. */
+  target?: DbRelationName | null
 }
+
+/** A foreign key of another relation (or this one) that points here: `sales.orders(customer_id)`. */
+export type DbBacklink = DbRelationName & { constraint: string; columns: string[] }
 
 /** `definition` is the index's method and keys: `UNIQUE btree (id)`. */
 export type DbIndex = { name: string; definition: string }
 
-/** What opening a relation needs before any rows: its columns, constraints and indexes. */
-export type DbRelationDetail = { columns: DbColumn[]; constraints: DbConstraint[]; indexes: DbIndex[] }
+/** What opening a relation needs before any rows: its columns, constraints, indexes and who points at it. */
+export type DbRelationDetail = {
+  columns: DbColumn[]
+  constraints: DbConstraint[]
+  indexes: DbIndex[]
+  /** Absent in a detail kept from before 0.4.0. */
+  referencedBy?: DbBacklink[]
+}
 
 export type DbPreview = {
   /** The query as the pane shows it: `SELECT * FROM sales.orders ORDER BY id LIMIT 50;` */
@@ -141,6 +157,11 @@ export type DbView = {
   filter: string
   /** Absent in a view kept from before 0.3.0. */
   scroll?: DbScroll
+  /**
+   * The objects a foreign key jump left, oldest first: Back returns to the
+   * last. A press in the tree starts afresh. Absent before 0.4.0.
+   */
+  trail?: DbRef[]
 }
 
 declare module 'claude-code' {

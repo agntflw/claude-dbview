@@ -1,12 +1,18 @@
-import type { DbCatalog, DbRef, DbRowLimit, DbScroll, DbTab, DbView } from '../../types'
+import type { DbCatalog, DbRef, DbRelationName, DbRowLimit, DbScroll, DbTab, DbView } from '../../types'
 import type { Engine } from '../engine/engine'
 import { EMPTY_SCROLL, EMPTY_VIEW, folderId, relationId, relationKey, schemaId, sourceId } from './state'
 import type { ViewPort } from './state'
+import { folderOf, listTree, sameRef } from './tree'
 
 // What a press or a command does: ask the engine, write the answer to the
 // view. The pane redraws from the view by itself.
 
 export const ROW_LIMITS: DbRowLimit[] = [50, 100, 500, 1000]
+
+/** How many jumps Back remembers. */
+const TRAIL_MAX = 20
+/** Rows of the tree kept above an object a jump lands on. */
+const REVEAL_ABOVE = 3
 
 export type Actions = ReturnType<typeof createActions>
 
@@ -29,6 +35,7 @@ export function createActions(engine: Engine, port: ViewPort) {
       sources: answer.value,
       sourcesStatus: { phase: 'ready' },
       selected: v.selected && ids.has(v.selected.source) ? v.selected : null,
+      trail: (v.trail ?? []).filter(one => ids.has(one.source)),
     }))
 
     const first = answer.value[0]
@@ -109,7 +116,53 @@ export function createActions(engine: Engine, port: ViewPort) {
       preview: null,
       ddl: null,
       tab: ref.kind === 'sequence' ? 'ddl' : v.tab === 'ddl' && current?.kind === 'sequence' ? 'rows' : v.tab,
+      trail: [],
     }))
+    await fill(ref)
+  }
+
+  /**
+   * Follows a foreign key, as a link in a file tree: the table it points at
+   * opens on the same tab, unfolded and brought into view in the tree. The
+   * object left behind goes on the trail, for Back.
+   */
+  async function jump(to: DbRelationName & { source: string }): Promise<void> {
+    const now = await port.get()
+    if (now.selected && sameRef(now.selected, to)) return
+    await land(to, now.selected ? [...(now.trail ?? []), now.selected].slice(-TRAIL_MAX) : (now.trail ?? []))
+  }
+
+  /** Returns to the object the last jump left. */
+  async function back(): Promise<void> {
+    const trail = (await port.get()).trail ?? []
+    const last = trail[trail.length - 1]
+    if (last) await land(last, trail.slice(0, -1))
+  }
+
+  async function land(to: DbRelationName & { source: string }, trail: DbRef[]): Promise<void> {
+    const relation = (await port.get()).catalogs[to.source]?.schemas
+      .find(schema => schema.name === to.schema)
+      ?.relations.find(one => one.name === to.name)
+    const ref: DbRef = { source: to.source, schema: to.schema, name: to.name, kind: relation?.kind ?? 'table' }
+    const rid = relationId(ref.source, ref.schema, ref.name)
+    const path = [sourceId(ref.source), schemaId(ref.source, ref.schema), folderId(ref.source, ref.schema, folderOf(ref.kind)), rid]
+
+    await port.set(v => {
+      const next: DbView = {
+        ...v,
+        expanded: [...v.expanded, ...path.filter(id => !v.expanded.includes(id))],
+        selected: ref,
+        preview: null,
+        ddl: null,
+        tab: ref.kind === 'sequence' ? 'ddl' : v.tab,
+        trail,
+      }
+      // A filter that hides the target gives way; then the tree moves to it.
+      const shown = listTree(next).some(row => row.key === rid) ? next : { ...next, filter: '' }
+      const at = listTree(shown).findIndex(row => row.key === rid)
+
+      return { ...shown, scroll: { ...(v.scroll ?? EMPTY_SCROLL), tree: Math.max(0, at - REVEAL_ABOVE) } }
+    })
     await fill(ref)
   }
 
@@ -188,11 +241,7 @@ export function createActions(engine: Engine, port: ViewPort) {
     return now !== null && sameRef(now, ref)
   }
 
-  return { loadSources, refresh, loadCatalog, toggleSource, pickSource, toggle, pressRelation, setTab, setLimit, setFilter, setScroll, reset }
-}
-
-function sameRef(a: DbRef, b: DbRef): boolean {
-  return a.source === b.source && a.schema === b.schema && a.name === b.name
+  return { loadSources, refresh, loadCatalog, toggleSource, pickSource, toggle, pressRelation, jump, back, setTab, setLimit, setFilter, setScroll, reset }
 }
 
 /** A small database opens with its schemas and their tables showing. */
