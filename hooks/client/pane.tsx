@@ -186,13 +186,13 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     if (span.max <= 0) return false
     const step = Math.max(1, Math.floor(span.page / 2))
     const up = (
-      <Button key={`${id}-up`} plain dimColor onPress={() => move(Math.max(0, offset - step))}>
-        ▴
+      <Button key={`${id}-up`} plain onPress={() => move(Math.max(0, offset - step))}>
+        <Text color={COLOR.muted}>{isGraphic ? '▲' : '▴'}</Text>
       </Button>
     )
     const down = (
-      <Button key={`${id}-down`} plain dimColor onPress={() => move(Math.min(span.max, offset + step))}>
-        ▾
+      <Button key={`${id}-down`} plain onPress={() => move(Math.min(span.max, offset + step))}>
+        <Text color={COLOR.muted}>{isGraphic ? '▼' : '▾'}</Text>
       </Button>
     )
     if (isGraphic) {
@@ -911,10 +911,14 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     </Box>
   )
 
+  // The desktop asks to move a pane's window only while the body is taller
+  // than the pane, so two spare rows under the panels keep the wheel coming.
+  // The ui.scroll hook keeps the window where it is and moves the panels.
   const element = (
     <Box flexDirection="column" gap={1}>
       {notice}
       {view.sources.length > 0 && body}
+      {view.sources.length > 0 && isGraphic && <Box height={2} flexShrink={0} />}
     </Box>
   )
 
