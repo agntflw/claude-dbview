@@ -10,6 +10,7 @@ import type {
   DbRelation,
   DbRelationDetail,
   DbSchema,
+  DbRowLimit,
   DbScroll,
   DbSource,
   DbTab,
@@ -518,7 +519,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         </Box>
         <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
           {row.meta ? (
-            <Text dimColor mono={row.isMono} size="footnote" wrap="truncate-end">
+            <Text dimColor mono={row.isMono} size={row.isMono ? undefined : 'footnote'} wrap="truncate-end">
               {row.meta}
             </Text>
           ) : (
@@ -761,12 +762,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
           <Text dimColor size="footnote">
             Limit
           </Text>
-          {track(
-            ROW_LIMITS.map(one => ({ id: one, label: String(one), key: `limit-${one}` })),
-            view.limit,
-            id => void act.setLimit(id),
-            true,
-          )}
+          {limitStepper()}
         </Box>
       </Box>
     )
@@ -787,20 +783,44 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     return { lines, cols: Math.max(gridCols, value.query.length, summary.length), toolbar, toolbarRows: framedRows }
   }
 
+  // One number between two steps, through the presets: the cleanest the
+  // pane can draw, as it has no drag. A step at the end of the range dims.
+  function limitStepper() {
+    const at = ROW_LIMITS.indexOf(view.limit)
+    const less = ROW_LIMITS[at - 1]
+    const more = ROW_LIMITS[at + 1]
+    const step = (key: string, glyph: string, to: DbRowLimit | undefined) =>
+      to === undefined ? (
+        <Text color={COLOR.border}>{glyph}</Text>
+      ) : (
+        <Button key={key} plain onPress={() => void act.setLimit(to)}>
+          <Text color={COLOR.muted}>{glyph}</Text>
+        </Button>
+      )
+
+    return (
+      <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0} {...frame}>
+        {step('limit-less', '‹', less)}
+        <Box width={4} justifyContent="center">
+          <Text mono weight="medium" tabular>
+            {String(view.limit)}
+          </Text>
+        </Box>
+        {step('limit-more', '›', more)}
+      </Box>
+    )
+  }
+
+  // The DDL. A graphical surface's code block carries its own frame and copy
+  // button, so there it stands alone; the terminal's has neither.
   function ddlSection(source: string): Section {
     const sourceLines = source.split('\n')
     const gutter = String(sourceLines.length).length + 2
-    const toolbar = (
-      <Box flexDirection="row" justifyContent="space-between" alignItems="center" flexShrink={0}>
-        <Text dimColor size="footnote">
-          SQL · generated from pg_catalog
-        </Text>
-        <Box flexDirection="row" gap={1} alignItems="center">
-          {Svg && line('copy')}
-          <Button key="copy" plain dimColor hotkey={keyOf('y')} onPress={() => copy(source)}>
-            Copy
-          </Button>
-        </Box>
+    const toolbar = isGraphic ? undefined : (
+      <Box flexDirection="row" justifyContent="flex-end" alignItems="center" flexShrink={0}>
+        <Button key="copy" plain dimColor hotkey="y" onPress={() => copy(source)}>
+          Copy
+        </Button>
       </Box>
     )
 
@@ -808,7 +828,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
       lines: sourceLines.map(one => <Text wrap="truncate-end">{one}</Text>),
       cols: gutter + Math.max(...sourceLines.map(one => one.length)) + 1,
       toolbar,
-      toolbarRows: 1,
+      toolbarRows: toolbar ? 1 : 0,
       code: source,
     }
   }
@@ -842,7 +862,9 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
     const note =
       view.tab === 'columns' && known
         ? `${known.columns.length} columns · ${known.constraints.length} constraint${known.constraints.length === 1 ? '' : 's'}`
-        : ''
+        : view.tab === 'ddl'
+          ? 'SQL · generated from pg_catalog'
+          : ''
 
     // Rows down: the panel less its frame, the title's two, the tabs, the
     // toolbar, the well's frame and the bar across; each with its gap.
@@ -902,7 +924,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
         </Box>
         {section?.toolbar}
         {section && (
-          <Box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" {...well}>
+          <Box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" {...(section.code && isGraphic ? {} : well)}>
             <Box flexDirection="row" gap={1} flexGrow={1} minHeight={0} overflow="hidden">
               <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
                 <Box flexDirection="column" width={contentCols} marginLeft={section.code ? 0 : -left} flexShrink={0}>
