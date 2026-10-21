@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import { createActions } from './client/actions'
-import { drawPane, scrolled } from './client/pane'
+import { detailForOf, drawPane, scrolled } from './client/pane'
 import type { PaneLayout } from './client/pane'
 import { EMPTY_VIEW } from './client/state'
 import { forgetUrl, parseUrl, saveUrl } from './engine/connection'
@@ -20,6 +20,8 @@ const TITLE = 'Database'
 const view = atom({ plugin: 'dbview', key: 'view' } as const, EMPTY_VIEW)
 /** What the pane last laid out, so a wheel over it moves the part under the pointer. */
 let layout: PaneLayout | undefined
+/** Where the body scrolls: the open object, and the body row it opened at. */
+let opened: { for: string; top: number } | undefined
 const USAGE =
   'Use /db, /db connect postgres://user:password@host:5432/database [name], /db forget <name> or /db refresh. ' +
   'Running Postgres containers show up by themselves.'
@@ -134,6 +136,10 @@ export const register: Register = (on, options) => {
     })
 
     const els = $.ui.resolve(e)
+    const now = await read($, view)
+    // Where the body scrolls, an object opens where the window is, so it is
+    // in view beside the row that opened it however far the tree goes.
+    if (opened?.for !== detailForOf(now)) opened = { for: detailForOf(now), top: e.props.scroll.offset }
     const drawn = drawPane({
       els,
       Input: e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input,
@@ -142,7 +148,8 @@ export const register: Register = (on, options) => {
       copy: text => void $.ui.copy({ text, surface: e.surface }),
       width: e.props.bodyColumns,
       height: e.props.scroll.bodyRows,
-      view: await read($, view),
+      detailTop: opened.top,
+      view: now,
       act,
     })
     layout = drawn.layout
@@ -150,11 +157,12 @@ export const register: Register = (on, options) => {
     return drawn.element
   })
 
-  // The pane scrolls its tree and its open object itself, each in a window
-  // of its own, so the body never moves: the wheel moves the part under it.
+  // On the terminal the pane scrolls its tree and its open object itself,
+  // each in a window of its own, so the body never moves: the wheel moves the
+  // part under it. A graphical surface has moved the body already: let it.
   on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const now = layout
-    if (!now) return next(e)
+    if (!now || now.isFlow) return next(e)
     await update($, view, value => ({ ...value, scroll: scrolled(value, now, e.by, e.pointer) }))
 
     return {}

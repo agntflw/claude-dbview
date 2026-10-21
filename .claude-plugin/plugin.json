@@ -1,6 +1,6 @@
 {
   "name": "dbview",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "A PostgreSQL database view in a pane: every database and Postgres container as an IDE-style tree, with columns, constraints, rows and DDL.",
   "author": {
     "name": "AGENTFLOW",
