@@ -22,27 +22,35 @@ A PostgreSQL database view for Claude Code, in a pane beside the chat: every dat
 
 ### Or let Claude install it
 
-Download or clone this repository, then paste this to Claude Code, with the folder's path filled in:
+Paste this into Claude Code, in any folder:
 
 ```
-Install the Claude Code plugin in <path to the claude-dbview folder> globally for me:
-1. Run: claude plugin install dbview --marketplace "<that path>" --scope user --config psql_path=psql
-2. Run: claude plugin list, and check dbview is installed and enabled.
-3. Check what it needs: psql --version, and docker --version if I use Postgres in Docker.
+Install the dbview plugin for Claude Code globally for me (user scope), from github.com/agntflw/claude-dbview.
+1. If a claude-dbview folder with .claude-plugin/marketplace.json is already on this machine
+   (the current folder, ~/Downloads, or ~/code), use it. Otherwise clone it to ~/.claude/plugins-src/claude-dbview
+   with git or gh. The repository is private: if the clone is refused, tell me to run gh auth login and stop.
+2. Run, with the folder from step 1: claude plugin install dbview --marketplace <folder> --scope user --config psql_path=psql
+3. Run: claude plugin list, and check dbview is installed and enabled.
+4. Check what it needs: psql --version, and docker --version if I use Postgres in Docker.
    Tell me what is missing and how to install it on this machine, but do not install it.
-4. Tell me to start a new session and type /db.
+5. Tell me to start a new Claude Code session and type /db.
 ```
 
 ### Add MySQL beside Postgres
 
-dbview reads PostgreSQL only. To have Claude add MySQL (8.4 LTS, the current line, or pin `mysql:8.4.5`) to your own copy, open Claude Code in the cloned `claude-dbview` folder and paste:
+dbview reads PostgreSQL only. To have Claude add MySQL (8.4 LTS, or pinned to 8.4.5) to your copy, paste this into Claude Code, in any folder:
 
 ```
-Add MySQL support to this dbview mod, beside PostgreSQL, without changing how Postgres works.
+Add MySQL support to my dbview plugin (github.com/agntflw/claude-dbview), beside PostgreSQL,
+without changing how Postgres works.
+
+Find the code first: use the claude-dbview folder that `claude plugin list` shows dbview is read from,
+else one already on this machine, else clone the repository to ~/.claude/plugins-src/claude-dbview.
+Work in that folder.
 
 Set up a test database first:
 - Run MySQL 8.4 in Docker: docker run -d --name mysql84 -e MYSQL_ROOT_PASSWORD=dev
-  -e MYSQL_DATABASE=shop -p 33306:3306 mysql:8.4  (use mysql:8.4.5 if I ask for that exact version).
+  -e MYSQL_DATABASE=shop -p 33306:3306 mysql:8.4  (the latest 8.4 LTS; write mysql:8.4.5 here to pin it).
 - Wait until it accepts connections, then load a MySQL version of dev/seed.sql
   (schemas become databases; serial becomes AUTO_INCREMENT; keep the same tables, keys and rows).
 
@@ -67,7 +75,9 @@ Prove it:
   (catalog, columns, a foreign key, an index, 50 rows in key order, DDL),
   and re-record tests/fixtures.ts.
 - Add pane tests for a MySQL source. Run claude plugin validate . and claude plugin test .
-- Show me the pane with /db, with the Postgres and the MySQL databases side by side.
+- Bump the version in .claude-plugin/plugin.json, then reinstall from that folder:
+  claude plugin install dbview --marketplace <folder> --scope user
+- Tell me to start a new session and type /db, where the Postgres and MySQL databases sit side by side.
 ```
 
 ## What it shows
