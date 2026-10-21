@@ -2,9 +2,16 @@
 
 A PostgreSQL database view for Claude Code, in a pane beside the chat: every database and Postgres container as an IDE-style tree, with columns, constraints, rows and DDL. Read-only.
 
-| Rows | Columns | DDL |
-|---|---|---|
-| [![Rows tab](docs/images/rows.png)](docs/images/rows.png) | [![Columns tab](docs/images/columns.png)](docs/images/columns.png) | [![DDL tab](docs/images/ddl.png)](docs/images/ddl.png) |
+![dbview: the Rows, Columns and DDL tabs](docs/images/tour.gif)
+
+<details>
+<summary>The three tabs as still images</summary>
+
+![Rows tab](docs/images/rows.png)
+![Columns tab](docs/images/columns.png)
+![DDL tab](docs/images/ddl.png)
+
+</details>
 
 <sub>Design mockups of the pane on the desktop app. The pane draws the same layout with the surface's own elements; on the terminal it uses glyphs and no borders.</sub>
 
