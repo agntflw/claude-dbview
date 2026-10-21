@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import { createActions } from './client/actions'
-import { drawPane } from './client/pane'
+import { drawPane, scrolled } from './client/pane'
+import type { PaneLayout } from './client/pane'
 import { EMPTY_VIEW } from './client/state'
 import { forgetUrl, parseUrl, saveUrl } from './engine/connection'
 import { createEngine } from './engine/engine'
@@ -17,6 +18,8 @@ import type { Host } from './engine/host'
 const PANE = 'dbview'
 const TITLE = 'Database'
 const view = atom({ plugin: 'dbview', key: 'view' } as const, EMPTY_VIEW)
+/** What the pane last laid out, so a wheel over it moves the part under the pointer. */
+let layout: PaneLayout | undefined
 const USAGE =
   'Use /db, /db connect postgres://user:password@host:5432/database [name], /db forget <name> or /db refresh. ' +
   'Running Postgres containers show up by themselves.'
@@ -131,16 +134,29 @@ export const register: Register = (on, options) => {
     })
 
     const els = $.ui.resolve(e)
-
-    return drawPane({
+    const drawn = drawPane({
       els,
       Input: e.surface === 'mobile' ? undefined : $.ui.resolve(e).Input,
       Select: e.surface === 'mobile' ? undefined : $.ui.resolve(e).Select,
       Svg: e.surface === 'terminal' ? undefined : $.ui.resolve(e).Svg,
       copy: text => void $.ui.copy({ text, surface: e.surface }),
       width: e.props.bodyColumns,
+      height: e.props.scroll.bodyRows,
       view: await read($, view),
       act,
     })
+    layout = drawn.layout
+
+    return drawn.element
+  })
+
+  // The pane scrolls its tree and its open object itself, each in a window
+  // of its own, so the body never moves: the wheel moves the part under it.
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const now = layout
+    if (!now) return next(e)
+    await update($, view, value => ({ ...value, scroll: scrolled(value, now, e.by, e.pointer) }))
+
+    return {}
   })
 }

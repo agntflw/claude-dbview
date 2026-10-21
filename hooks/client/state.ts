@@ -1,8 +1,10 @@
-import type { DbView } from '../../types'
+import type { DbScroll, DbView } from '../../types'
 
 // The one value the pane draws from (`dbview.view`, declared in the
 // contract and held as an atom in the hooks module). The engine's answers
 // land in it; the pane reads it while drawing and its presses write it.
+
+export const EMPTY_SCROLL: DbScroll = { tree: 0, detail: 0, left: 0, for: '' }
 
 export const EMPTY_VIEW: DbView = {
   sources: [],
@@ -18,6 +20,7 @@ export const EMPTY_VIEW: DbView = {
   tab: 'rows',
   limit: 50,
   filter: '',
+  scroll: EMPTY_SCROLL,
 }
 
 /** How the client reads and writes its value, handed down from a hook. */

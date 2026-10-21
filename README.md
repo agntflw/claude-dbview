@@ -134,6 +134,17 @@ On a claude.ai Team or Enterprise plan, an Owner can also add dbview for everyon
 
 The pane lists, in order: the databases saved with `/db connect`, the one named by `DATABASE_URL` or the `PG*` variables (unless a saved one is the same), then each running Postgres container. Press a database to unfold it (its catalog loads the first time), or pick one in the switcher at the top. Press a schema or folder to fold it, press a table to open it (press again to fold its columns), and filter the tree by table or column name. With the pane focused: `c`, `w`, `d` switch to Columns, Rows, DDL; `r` refreshes; `y` copies the DDL.
 
+The pane follows its width: the tree and the open object sit side by side when it is wide, the object under the tree when it is narrow, and the tree takes about a third of a wide pane. Each panel scrolls on its own: the wheel moves the part under the pointer, and over the bar under the open object it moves the columns sideways. The ▴ ▾ ◂ ▸ steps at the ends of the bars do the same with a click.
+
+## Update
+
+```
+claude plugin marketplace update claude-dbview
+claude plugin update dbview@claude-dbview
+```
+
+Then run `/reload-plugins` in an open session, or start a new one. Installed from a local folder instead: `git pull` in that folder, then `/reload-plugins`.
+
 ## Needs
 
 - For saved and `DATABASE_URL` databases: `psql` (the PostgreSQL client) on the machine running Claude Code. The engine looks on the PATH and in the usual Homebrew, Postgres.app and Linux locations; set another path with the `psql_path` option in `/config`.

@@ -1,6 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { scrolled } from '../hooks/client/pane'
+import type { PaneLayout } from '../hooks/client/pane'
+import { EMPTY_VIEW } from '../hooks/client/state'
 import { callKey } from './call-key'
 import { RECORDED } from './fixtures'
 
@@ -13,7 +16,7 @@ const HOST_URL = 'postgres://postgres:postgres@localhost:5432/shop'
 const SURFACES = ['terminal', 'desktop', 'vscode', 'mobile'] as const
 type Surface = (typeof SURFACES)[number]
 
-const pane = <S extends Surface>(surface: S, bodyColumns: number) =>
+const pane = <S extends Surface>(surface: S, bodyColumns: number, bodyRows = 80) =>
   ({
     plugin: 'dbview',
     surface,
@@ -24,7 +27,7 @@ const pane = <S extends Surface>(surface: S, bodyColumns: number) =>
       isFocused: true,
       bodyColumns,
       placement: 'dock',
-      scroll: { offset: 0, bodyRows: 80 },
+      scroll: { offset: 0, bodyRows },
       view: {},
     },
   }) as const
@@ -204,4 +207,56 @@ test('a saved connection that is refused says so in one line, and is forgotten b
 
   expect((await $.command.run(run('forget nope'))).text).toMatch(/^No saved connection is named nope\./)
   expect((await $.command.run(run('forget shop'))).text).toBe('Forgot shop.')
+})
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`the tree and the open object scroll on their own, down and across (${surface})`, async ($, on) => {
+    host(on, { DATABASE_URL: HOST_URL })
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run(run(''))
+    const ui = await $.ui.mount(pane(surface, 44, 36))
+
+    // Narrow: stacked, the rows of orders in a window under the tree.
+    await ui.press({ key: 'r:env|sales.orders' })
+    expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 50;' })).toBeDefined()
+    expect(await ui.find({ text: /ms · read-only/ })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: 'detail-up' })).toBeDefined()
+    for (let step = 0; step < 60; step++) await ui.press({ key: 'detail-down' })
+    expect(await ui.find({ text: /ms · read-only/ })).toBeDefined()
+    expect(await ui.find({ text: 'SELECT * FROM sales.orders ORDER BY id LIMIT 50;' })).toBeUndefined()
+
+    // Wider than the room: a bar across, and its steps move the grid.
+    expect(await ui.find({ type: 'Button', key: 'detail-right' })).toBeDefined()
+    await ui.press({ key: 'detail-right' })
+    const moved = (await ui.findAll({ type: 'Box' })).some(box => typeof box.props.marginLeft === 'number' && box.props.marginLeft < 0)
+    expect(moved).toBe(true)
+
+    // Another tab starts at the top left again.
+    await ui.press({ key: 'tab-columns' })
+    expect(await ui.find({ text: 'Name' })).toBeDefined()
+    await ui.unmount()
+  })
+}
+
+test('a wheel moves the part under the pointer', () => {
+  const layout: PaneLayout = {
+    isWide: true,
+    split: 40,
+    across: 50,
+    tree: { max: 30, page: 40 },
+    detail: { max: 100, page: 40 },
+    left: { max: 60, page: 70 },
+    for: 'env|sales.orders:rows',
+  }
+  const view = { ...EMPTY_VIEW, scroll: { tree: 0, detail: 0, left: 0, for: 'env|sales.orders:rows' } }
+
+  expect(scrolled(view, layout, 1, { column: 10, row: 5 })).toMatchObject({ tree: 3, detail: 0, left: 0 })
+  expect(scrolled(view, layout, 2, { column: 60, row: 5 })).toMatchObject({ tree: 0, detail: 6, left: 0 })
+  expect(scrolled(view, layout, 1, { column: 60, row: 51 })).toMatchObject({ detail: 0, left: 4 })
+  expect(scrolled(view, layout, -1, { column: 60, row: 5 })).toMatchObject({ detail: 0 })
+  expect(scrolled(view, layout, 500, { column: 10, row: 5 })).toMatchObject({ tree: 30 })
+  // Keys with no pointer move the open object; another object starts at the top.
+  expect(scrolled(view, layout, 40)).toMatchObject({ detail: 40 })
+  const other = { ...view, scroll: { tree: 4, detail: 9, left: 9, for: 'env|sales.customer:rows' } }
+  expect(scrolled(other, layout, 1)).toMatchObject({ tree: 4, detail: 1, left: 0, for: 'env|sales.orders:rows' })
 })

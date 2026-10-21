@@ -10,6 +10,7 @@ import type {
   DbRelation,
   DbRelationDetail,
   DbSchema,
+  DbScroll,
   DbSource,
   DbTab,
   DbView,
@@ -18,12 +19,14 @@ import { ROW_LIMITS } from './actions'
 import type { Actions } from './actions'
 import { COLOR, SPACER_SVG, glyphOf, lineSvg, tileSvg } from './icons'
 import type { IconName } from './icons'
-import { folderId, relationId, relationKey, schemaId, sourceId } from './state'
+import { EMPTY_SCROLL, folderId, relationId, relationKey, schemaId, sourceId } from './state'
 
 // The client side: draws the pane from the view, on whichever surface asks.
-// Tree on the left (data source, schema, kind folder, object, column) and the
-// open object on the right, as the Claude desktop sidebar sits beside its
-// content; stacked when the pane is narrow. Nothing here reaches a database.
+// Two panels, as the Claude desktop sidebar sits beside its content: the tree
+// (data source, schema, kind folder, object, column) and the open object.
+// Side by side when the pane is wide, stacked when it is narrow; each panel
+// scrolls on its own, the open object across as well, with its own bars.
+// Nothing here reaches a database.
 
 type Table = Elements['terminal']
 
@@ -34,16 +37,41 @@ export type PaneInput = {
   Select?: Table['Select']
   /** The surface's SVG image, where it has one (not the terminal). */
   Svg?: ElementConstructor<{ source: string; alt: string; width?: number; height?: number }>
+  /** The pane body, in cells across and rows down. */
   width: number
+  height: number
   view: DbView
   act: Actions
   /** Puts text on the clipboard of the surface drawing the pane. */
   copy: (text: string) => void
 }
 
-const WIDE_AT = 80
-const TREE_COLUMNS = 40
-const CELL_MAX = 24
+/** How far one part of the pane can move, and how much of it shows at once. */
+export type Span = { max: number; page: number }
+
+/** What the last drawing laid out: where a wheel over the body lands, and how far each part moves. */
+export type PaneLayout = {
+  isWide: boolean
+  /** Wide: the tree's columns from the left edge. Stacked: the tree's rows from the top. */
+  split: number
+  /** The body row from which a wheel over the open object moves it across (its bar's row). */
+  across: number
+  tree: Span
+  detail: Span
+  left: Span
+  /** The object and tab the detail's offsets belong to. */
+  for: string
+}
+
+export type PaneDrawing = { element: RenderElement; layout: PaneLayout }
+
+const WIDE_AT = 84
+const TREE_SHARE = 0.3
+const TREE_MIN = 32
+const TREE_MAX = 52
+const CELL_MAX = 40
+/** A graphical surface's rows are drawn in pixels: place a few more than counted, the panel clips them. */
+const SLACK = 6
 
 type Row = {
   key: string
@@ -105,21 +133,38 @@ const CONSTRAINT_ICON: Record<DbConstraint['kind'], IconName> = {
   notnull: 'notnull',
 }
 
-export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: PaneInput): RenderElement {
+export function drawPane({ els, Input, Select, Svg, width, height, view, act, copy }: PaneInput): PaneDrawing {
   const { Box, Text, Button, Code } = els
+  const isGraphic = Svg !== undefined
+
+  // The room. Wide: tree at the left, a share of the width within bounds, the
+  // open object takes the rest. Narrow: the tree on top, the object below.
   const isWide = width >= WIDE_AT
-  const treeWidth = isWide ? Math.min(TREE_COLUMNS, Math.floor(width * 0.45)) : width
-  const detailWidth = isWide ? width - treeWidth - 3 : width
+  const hasDetail = view.selected !== null
+  const bodyRows = Math.max(16, height - 1)
+  const treeCols = isWide ? clamp(Math.round(width * TREE_SHARE), TREE_MIN, TREE_MAX) : width
+  const detailCols = isWide ? width - treeCols - 1 : width
+  const treeRows = isWide || !hasDetail ? bodyRows : clamp(Math.round(bodyRows * 0.4), 8, Math.max(8, bodyRows - 16))
+  const detailRows = isWide ? bodyRows : bodyRows - treeRows - 1
+
+  // A panel: rounded, a step darker than the pane, on the graphical surfaces.
+  // The terminal pane drops what a bordered Box holds, so there the same
+  // parts stand unframed. A graphical border is a pixel, not a cell: what a
+  // frame costs is counted in its padding, a cell a side, and about a row.
+  const edgeRows = isGraphic ? 1 : 0
+  const padCols = isGraphic ? 2 : 0
+  const panel = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.panel, paddingX: 1 } as const) : {}
+  const well = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.well, paddingX: 1 } as const) : {}
+  const frame = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.ground, paddingX: 1 } as const) : {}
+  const framedRows = isGraphic ? 2 : 1
 
   const line = (name: IconName, color?: string) =>
     Svg ? <Svg source={lineSvg(name, color)} alt={name} width={16} height={16} /> : <Text dimColor>{glyphOf(name)}</Text>
   const tile = (name: IconName, size: number) =>
     Svg ? <Svg source={tileSvg(name, size)} alt={name} width={size} height={size} /> : <Text color={COLOR.muted}>{glyphOf(name)}</Text>
   const spacer = () => (Svg ? <Svg source={SPACER_SVG} alt="" width={16} height={16} /> : <Text> </Text>)
-  // Rounded outlines on the graphical surfaces. The terminal pane drops what a
-  // bordered Box holds, so there the same parts stand unframed.
-  const frame = Svg ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.ground, paddingX: 1 } as const) : {}
   const accentOf = (name: IconName) => (name === 'key' ? '#e0a94e' : name === 'link' ? '#6aa6ee' : undefined)
+  const blank = () => <Text> </Text>
 
   const dotOf = (state: Row['dot']) =>
     state === 'connected' ? (
@@ -132,8 +177,80 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
   const stateOf = (source: DbSource): Row['dot'] =>
     view.status[source.id]?.phase === 'error' ? 'error' : view.catalogs[source.id] ? 'connected' : 'idle'
 
+  const detailFor = view.selected ? `${relationKey(view.selected.source, view.selected.schema, view.selected.name)}:${view.tab}` : ''
+  const scroll = scrollOf(view, detailFor)
+
+  // A vertical bar beside a scrolled part: a thin track, the thumb sized to
+  // what shows, a step up and down at its ends. Only while there is more.
+  function vbar(id: string, offset: number, span: Span, shown: number, move: (to: number) => void) {
+    if (span.max <= 0) return false
+    const step = Math.max(1, Math.floor(span.page / 2))
+    const up = (
+      <Button key={`${id}-up`} plain dimColor onPress={() => move(Math.max(0, offset - step))}>
+        ▴
+      </Button>
+    )
+    const down = (
+      <Button key={`${id}-down`} plain dimColor onPress={() => move(Math.min(span.max, offset + step))}>
+        ▾
+      </Button>
+    )
+    if (isGraphic) {
+      return (
+        <Box flexDirection="column" alignItems="center" flexShrink={0}>
+          {up}
+          <Box flexDirection="column" flexGrow={1} width={1} backgroundColor={COLOR.track}>
+            <Box flexGrow={offset} />
+            <Box flexGrow={span.page} minHeight={1} backgroundColor={COLOR.thumb} />
+            <Box flexGrow={span.max - offset} />
+          </Box>
+          {down}
+        </Box>
+      )
+    }
+    const track = Math.max(1, shown - 2)
+    const thumb = clamp(Math.round((track * span.page) / (span.max + span.page)), 1, track)
+    const from = Math.round(((track - thumb) * offset) / span.max)
+
+    return (
+      <Box flexDirection="column" flexShrink={0} width={1}>
+        {up}
+        {Array.from({ length: track }, (_, index) =>
+          index >= from && index < from + thumb ? <Text color={COLOR.muted}>┃</Text> : <Text dimColor>│</Text>,
+        )}
+        {down}
+      </Box>
+    )
+  }
+
+  // The bar under the open object's section, when it is wider than the room.
+  function hbar(offset: number, span: Span, cols: number, move: (to: number) => void) {
+    if (span.max <= 0) return false
+    const step = Math.max(4, Math.floor(span.page / 2))
+    const track = Math.max(4, cols - 4)
+    const thumb = clamp(Math.round((track * span.page) / (span.max + span.page)), 2, track)
+    const from = Math.round(((track - thumb) * offset) / span.max)
+
+    return (
+      <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0} overflow="hidden">
+        <Button key="detail-left" plain dimColor onPress={() => move(Math.max(0, offset - step))}>
+          ◂
+        </Button>
+        <Text mono wrap="truncate-end">
+          <Text color={COLOR.track}>{'━'.repeat(from)}</Text>
+          <Text color={COLOR.thumb}>{'━'.repeat(thumb)}</Text>
+          <Text color={COLOR.track}>{'━'.repeat(track - from - thumb)}</Text>
+        </Text>
+        <Button key="detail-right" plain dimColor onPress={() => move(Math.min(span.max, offset + step))}>
+          ▸
+        </Button>
+      </Box>
+    )
+  }
+
   // The switcher, atop the tree: which database is in front, a picker over
-  // every source, where it lives, whether it answers; refresh beside it.
+  // every source, where it lives, whether it answers; refresh beside it. The
+  // name keeps its room; where it lives gives way first.
   const shown = shownSource(view)
   const shownCatalog = shown ? view.catalogs[shown.id] : undefined
   const where = shown
@@ -150,28 +267,23 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
         onSelect={value => void act.pickSource(value)}
       />
     ) : (
-      <Text weight="medium" wrap="truncate-end">
-        {shown ? shown.label : 'Database'}
-      </Text>
+      <Text weight="medium">{shown ? shown.label : 'Database'}</Text>
     )
   const switcher = (
-    <Box
-      flexDirection="row"
-      justifyContent="space-between"
-      alignItems="center"
-      gap={1}
-      width={isWide ? treeWidth : width}
-      {...frame}
-    >
-      <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1}>
+    <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} overflow="hidden" {...frame}>
+      <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
         {tile('database', 20)}
-        {picker}
-        <Text dimColor size="footnote" wrap="truncate-end">
-          {where}
-        </Text>
+        <Box flexShrink={0}>{picker}</Box>
+        <Box flexShrink={1} overflow="hidden">
+          <Text dimColor size="footnote" wrap="truncate-end">
+            {where}
+          </Text>
+        </Box>
         {shown && dotOf(stateOf(shown))}
       </Box>
-      <Button key="refresh" label={Svg ? 'Refresh' : '↻'} hotkey="r" plain dimColor onPress={() => void act.refresh()} />
+      <Box flexShrink={0}>
+        <Button key="refresh" label={Svg ? 'Refresh' : '↻'} hotkey="r" plain dimColor onPress={() => void act.refresh()} />
+      </Box>
     </Box>
   )
 
@@ -326,12 +438,14 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
         depth: 4,
         icon: (column.isPrimaryKey ? 'key' : column.references ? 'link' : 'column') as IconName,
         label: column.name,
-        meta: column.type,
+        meta: shortType(column.type),
         isMono: true,
       })),
     ]
   }
 
+  // A tree row. The name keeps its room and the count or type at the right
+  // gives way first; what still does not fit is cut at the panel's edge.
   const drawRow = (row: Row) => {
     const chevron = row.isOpen === undefined ? spacer() : line(row.isOpen ? 'chevronDown' : 'chevronRight')
     const accent = accentOf(row.icon)
@@ -362,11 +476,14 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
         flexDirection="row"
         justifyContent="space-between"
         alignItems="center"
+        gap={1}
         paddingLeft={row.depth * 2}
         paddingRight={1}
+        flexShrink={0}
+        overflow="hidden"
         backgroundColor={row.isSelected && Svg ? COLOR.pill : undefined}
       >
-        <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1}>
+        <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
           {chevron}
           {icon}
           {row.onPress ? (
@@ -374,10 +491,10 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
               {name}
             </Button>
           ) : (
-            <Text wrap="truncate-end">{name}</Text>
+            <Text>{name}</Text>
           )}
         </Box>
-        <Box flexDirection="row" gap={1} alignItems="center">
+        <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
           {row.meta ? (
             <Text dimColor mono={row.isMono} size="footnote" wrap="truncate-end">
               {row.meta}
@@ -393,7 +510,7 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
 
   const filterField =
     Input && view.sources.length > 0 ? (
-      <Box flexDirection="row" gap={1} alignItems="center">
+      <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
         {line('search')}
         <Input
           key="filter"
@@ -408,18 +525,27 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
       false
     )
 
-  const tree = (
-    <Box flexDirection="column" gap={1} width={isWide ? treeWidth : undefined}>
+  // The tree panel: switcher, filter, then the rows in a window of their own.
+  const filterRows = filterField ? (isGraphic ? 2 : 1) + 1 : 0
+  const treeFit = Math.max(3, treeRows - edgeRows - framedRows - 1 - filterRows)
+  const tree: Span = { max: Math.max(0, rows.length - treeFit), page: treeFit }
+  const treeTop = Math.min(scroll.tree, tree.max)
+  const treeShown = rows.slice(treeTop, treeTop + treeFit + (isGraphic ? SLACK : 0))
+  const moveTree = (to: number) => void act.setScroll({ ...scroll, tree: to })
+
+  const treePanel = (
+    <Box flexDirection="column" gap={1} width={treeCols} height={treeRows} flexShrink={0} overflow="hidden" {...panel}>
       {switcher}
       {filterField}
-      <Box flexDirection="column">
-        {rows.map(drawRow)}
-        {filter !== '' && rows.every(row => row.depth === 0) && <Text dimColor>Nothing matches “{view.filter}”.</Text>}
+      <Box flexDirection="row" gap={1} flexGrow={1} minHeight={0} overflow="hidden">
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          {treeShown.map(drawRow)}
+          {filter !== '' && rows.every(row => row.depth === 0) && <Text dimColor>Nothing matches “{view.filter}”.</Text>}
+        </Box>
+        {vbar('tree', treeTop, tree, treeFit, moveTree)}
       </Box>
     </Box>
   )
-
-  const detail = view.selected ? drawDetail(view.selected) : false
 
   // A rounded track of text buttons, the chosen one filled: the tabs, the row limit.
   function track<T extends string | number>(
@@ -449,99 +575,35 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
     )
   }
 
-  function drawDetail(ref: DbRef) {
-    const relation = view.catalogs[ref.source]?.schemas
-      .find(schema => schema.name === ref.schema)
-      ?.relations.find(one => one.name === ref.name)
-    const known = view.relations[relationKey(ref.source, ref.schema, ref.name)]
-    const facts: string[] = []
-    if (relation?.rows != null) facts.push(`${compact(relation.rows)} rows`)
-    if (known) facts.push(`${known.columns.length} columns`)
-    else facts.push(KIND_WORD[ref.kind])
-    facts.push(ref.schema)
-    if (view.sources.length > 1) facts.push(view.sources.find(one => one.id === ref.source)?.label ?? ref.source)
-    const tabs = ref.kind === 'sequence' ? TABS.filter(one => one.id === 'ddl') : TABS
+  // The open object's section as lines, one row each, so the panel can show
+  // a window of them; and the cells it takes across, so it can move sideways.
+  type Section = { lines: RenderElement[]; cols: number; toolbar?: RenderElement; toolbarRows: number; code?: string }
 
-    const section = (() => {
-      if (view.detailStatus.phase === 'error') return <Text color="error">{view.detailStatus.error}</Text>
-      if (view.tab === 'columns' && known) return drawStructure(known)
-      if (view.tab === 'rows' && view.preview) return drawRows(view.preview, relation?.rows ?? null)
-      if (view.tab === 'ddl' && view.ddl !== null) return drawDdl(view.ddl)
-      if (view.detailStatus.phase === 'loading') return <Text dimColor>Loading…</Text>
+  // The section's room: the panel less its padding, the well's, the bar and its gap.
+  const sectionCols = Math.max(20, detailCols - padCols - padCols - 2)
 
-      return false
-    })()
-
-    const note =
-      view.tab === 'columns' && known
-        ? `${known.columns.length} columns · ${known.constraints.length} constraint${known.constraints.length === 1 ? '' : 's'}`
-        : view.tab === 'ddl'
-          ? 'generated from pg_catalog'
-          : ''
-
-    return (
-      <Box flexDirection="column" gap={1} width={isWide ? detailWidth : undefined}>
-        <Box flexDirection="row" gap={1} alignItems="center">
-          {tile(KIND_ICON[ref.kind], 32)}
-          <Box flexDirection="column">
-            <Text size="heading" weight="semibold">
-              {ref.name}
-            </Text>
-            <Text dimColor size="footnote">
-              {facts.join(' · ')}
-            </Text>
-          </Box>
-        </Box>
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
-          {track(
-            tabs.map(one => ({ id: one.id, label: one.label, key: `tab-${one.id}`, hotkey: one.hotkey })),
-            view.tab,
-            id => void act.setTab(id),
-          )}
-          <Text dimColor size="footnote" wrap="truncate-end">
-            {note}
-          </Text>
-        </Box>
-        {section}
-      </Box>
+  function columnsSection(detail: DbRelationDetail): Section {
+    const columns = detail.columns
+    const notNull = columns.filter(column => column.notNull && !column.isPrimaryKey).map(column => column.name)
+    const keyOf = (column: DbColumn) => (column.isPrimaryKey ? 'primary key' : column.references ? `→ ${column.references}` : '')
+    const nameWidth = Math.max(4, ...columns.map(column => column.name.length)) + 2
+    const typeWidth = Math.max(4, ...columns.map(column => column.type.length)) + 2
+    const nullWidth = 10
+    const keyWidth = Math.max('Key / reference'.length, ...columns.map(column => keyOf(column).length)) + 1
+    const defs = [
+      ...detail.constraints.map(one => ({ icon: CONSTRAINT_ICON[one.kind], name: one.name, text: one.definition.replace('REFERENCES ', '→ ') })),
+      ...(notNull.length > 0 ? [{ icon: 'notnull' as IconName, name: 'not null', text: notNull.join(', ') }] : []),
+    ]
+    const indexes = detail.indexes.map(one => ({ icon: 'index' as IconName, name: one.name, text: one.definition }))
+    const defName = Math.max(8, ...[...defs, ...indexes].map(one => one.name.length)) + 2
+    const cols = Math.max(
+      3 + nameWidth + typeWidth + nullWidth + keyWidth,
+      ...columns.map(column => (column.default === null ? 0 : 3 + 8 + column.default.length)),
+      ...[...defs, ...indexes].map(one => 3 + defName + one.text.length),
     )
-  }
 
-  function sectionTitle(title: string, count: number) {
-    return (
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text dimColor weight="medium">
-          {title}
-        </Text>
-        <Text dimColor size="footnote">
-          {String(count)}
-        </Text>
-      </Box>
-    )
-  }
-
-  function drawStructure(detail: DbRelationDetail) {
-    const notNull = detail.columns.filter(column => column.notNull && !column.isPrimaryKey).map(column => column.name)
-
-    return (
-      <Box flexDirection="column" gap={1}>
-        {drawColumns(detail.columns)}
-        {(detail.constraints.length > 0 || notNull.length > 0) && drawConstraints(detail.constraints, notNull)}
-        {detail.indexes.length > 0 && drawIndexes(detail.indexes)}
-      </Box>
-    )
-  }
-
-  function drawColumns(list: DbColumn[]) {
-    // Name and type take what they need, up to a third of the room each.
-    const room = Math.max(24, detailWidth - 3)
-    const nameWidth = Math.min(Math.floor(room / 3), Math.max(4, ...list.map(column => column.name.length)) + 2)
-    const typeWidth = Math.min(Math.floor(room / 3), Math.max(4, ...list.map(column => column.type.length)) + 2)
-    const isRoomy = detailWidth >= 70
-    const nullWidth = isRoomy ? 10 : 6
-
-    const cells = (icon: RenderElement, name: RenderElement, type: RenderElement, nullable: RenderElement, key: RenderElement) => (
-      <Box flexDirection="row" alignItems="center">
+    const cells = (icon: RenderElement, name: RenderElement, type: RenderElement, nullable: RenderElement, key: RenderElement, isHead = false) => (
+      <Box flexDirection="row" alignItems="center" backgroundColor={isHead && isGraphic ? COLOR.strip : undefined}>
         <Box width={3} flexShrink={0}>
           {icon}
         </Box>
@@ -554,144 +616,102 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
         <Box width={nullWidth} flexShrink={0}>
           {nullable}
         </Box>
-        <Box flexShrink={1}>{key}</Box>
+        <Box width={keyWidth} flexShrink={0}>
+          {key}
+        </Box>
       </Box>
     )
     const head = (label: string) => (
-      <Text dimColor size="footnote" weight="medium" wrap="truncate-end">
+      <Text dimColor size="footnote" weight="medium">
         {label}
       </Text>
     )
-
-    return (
-      <Box flexDirection="column">
-        {cells(<Text> </Text>, head('Name'), head('Type'), head(isRoomy ? 'Nullable' : 'Null'), head('Key / reference'))}
-        {list.map(column => {
-          const icon: IconName = column.isPrimaryKey ? 'key' : column.references ? 'link' : 'column'
-          const key = column.isPrimaryKey ? (
-            <Text dimColor size="footnote" wrap="truncate-end">
-              primary key
-            </Text>
-          ) : column.references ? (
-            <Text mono size="footnote" color={COLOR.link} wrap="truncate-end">
-              {`→ ${column.references}`}
-            </Text>
-          ) : (
-            <Text> </Text>
-          )
-
-          return (
-            <Box flexDirection="column">
-              {cells(
-                line(icon, accentOf(icon)),
-                <Text mono wrap="truncate-end" weight={column.isPrimaryKey ? 'semibold' : 'regular'}>
-                  {column.name}
-                </Text>,
-                <Text mono dimColor wrap="truncate-end">
-                  {column.type}
-                </Text>,
-                <Text dimColor size="footnote">
-                  {column.notNull ? 'no' : 'yes'}
-                </Text>,
-                key,
-              )}
-              {column.default !== null && (
-                <Box paddingLeft={3}>
-                  <Text mono dimColor size="footnote" wrap="truncate-end">
-                    {`default ${column.default}`}
-                  </Text>
-                </Box>
-              )}
-            </Box>
-          )
-        })}
-      </Box>
-    )
-  }
-
-  /** One line of the Constraints or Indexes list: icon, name, definition. */
-  function defLine(icon: IconName, name: string, definition: string, names: number) {
-    const nameWidth = Math.min(Math.floor(detailWidth * 0.45), names + 2)
-
-    return (
-      <Box flexDirection="row" alignItems="center">
-        <Box width={3} flexShrink={0}>
-          {line(icon, accentOf(icon))}
-        </Box>
-        <Box width={nameWidth} flexShrink={0} paddingRight={1}>
-          <Text mono wrap="truncate-end">
-            {name}
-          </Text>
-        </Box>
-        <Text mono dimColor wrap="truncate-end">
-          {definition}
+    const title = (label: string, count: number) => (
+      <Box flexDirection="row" justifyContent="space-between" width={cols} backgroundColor={isGraphic ? COLOR.strip : undefined}>
+        <Text dimColor weight="medium">
+          {` ${label}`}
+        </Text>
+        <Text dimColor size="footnote">
+          {`${count} `}
         </Text>
       </Box>
     )
-  }
-
-  function drawConstraints(list: DbConstraint[], notNull: string[]) {
-    const nameWidth = Math.max(8, ...list.map(one => one.name.length))
-
-    return (
-      <Box flexDirection="column">
-        {sectionTitle('Constraints', list.length + (notNull.length > 0 ? 1 : 0))}
-        {list.map(one => defLine(CONSTRAINT_ICON[one.kind], one.name, one.definition.replace('REFERENCES ', '→ '), nameWidth))}
-        {notNull.length > 0 && defLine('notnull', 'not null', notNull.join(', '), nameWidth)}
-      </Box>
-    )
-  }
-
-  function drawIndexes(list: DbIndex[]) {
-    const nameWidth = Math.max(8, ...list.map(one => one.name.length))
-
-    return (
-      <Box flexDirection="column">
-        {sectionTitle('Indexes', list.length)}
-        {list.map(one => defLine('index', one.name, one.definition, nameWidth))}
-      </Box>
-    )
-  }
-
-  function drawDdl(source: string) {
-    return (
-      <Box flexDirection="column" {...frame}>
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" paddingX={1}>
-          <Text dimColor size="footnote">
-            SQL
+    const defLine = (one: { icon: IconName; name: string; text: string }) => (
+      <Box flexDirection="row" alignItems="center">
+        <Box width={3} flexShrink={0}>
+          {line(one.icon, accentOf(one.icon))}
+        </Box>
+        <Box width={defName} flexShrink={0}>
+          <Text mono wrap="truncate-end">
+            {one.name}
           </Text>
-          <Box flexDirection="row" gap={1} alignItems="center">
-            {Svg && line('copy')}
-            <Button key="copy" plain dimColor hotkey="y" onPress={() => copy(source)}>
-              Copy
-            </Button>
-          </Box>
         </Box>
-        <Box paddingX={1}>
-          <Code source={source} language="sql" startLine={1} />
+        <Box width={one.text.length + 1} flexShrink={0}>
+          <Text mono dimColor wrap="truncate-end">
+            {one.text}
+          </Text>
         </Box>
       </Box>
     )
+
+    const lines: RenderElement[] = [cells(<Text> </Text>, head('Name'), head('Type'), head('Nullable'), head('Key / reference'), true)]
+    for (const column of columns) {
+      const icon: IconName = column.isPrimaryKey ? 'key' : column.references ? 'link' : 'column'
+      const key = column.isPrimaryKey ? (
+        <Text dimColor size="footnote">
+          primary key
+        </Text>
+      ) : column.references ? (
+        <Text mono size="footnote" color={COLOR.link}>
+          {`→ ${column.references}`}
+        </Text>
+      ) : (
+        <Text> </Text>
+      )
+      lines.push(
+        cells(
+          line(icon, accentOf(icon)),
+          <Text mono weight={column.isPrimaryKey ? 'semibold' : 'regular'}>
+            {column.name}
+          </Text>,
+          <Text mono dimColor>
+            {column.type}
+          </Text>,
+          <Text dimColor size="footnote">
+            {column.notNull ? 'no' : 'yes'}
+          </Text>,
+          key,
+        ),
+      )
+      if (column.default !== null) {
+        lines.push(
+          <Box paddingLeft={3} flexDirection="row" gap={1} width={cols}>
+            <Text dimColor size="caption">
+              default
+            </Text>
+            <Text mono dimColor size="footnote" wrap="truncate-end">
+              {column.default}
+            </Text>
+          </Box>,
+        )
+      }
+    }
+    if (defs.length > 0) lines.push(blank(), title('Constraints', defs.length), ...defs.map(defLine))
+    if (indexes.length > 0) lines.push(blank(), title('Indexes', indexes.length), ...indexes.map(defLine))
+
+    return { lines, cols, toolbarRows: 0 }
   }
 
-  function drawRows(value: DbPreview, estimate: number | null) {
+  function rowsSection(value: DbPreview, estimate: number | null): Section {
     const widths = value.columns.map((name, index) =>
       Math.min(CELL_MAX, Math.max(name.length, ...value.rows.map(row => cellText(row[index] ?? null).length))),
     )
-    // The columns that fit the room, two cells apart; the rest are counted.
-    let used = 0
-    let shown = 0
-    for (const columnWidth of widths) {
-      if (shown > 0 && used + columnWidth + 2 > detailWidth) break
-      used += columnWidth + 2
-      shown += 1
-    }
-    const hidden = value.columns.length - shown
+    const gridCols = widths.reduce((sum, one) => sum + one + 2, 0)
 
     const drawCells = (cells: (string | null)[], isHeader: boolean) => (
-      <Box flexDirection="row">
-        {cells.slice(0, shown).map((cell, index) => (
-          <Box width={(widths[index] ?? CELL_MAX) + 2}>
+      <Box flexDirection="row" backgroundColor={isHeader && isGraphic ? COLOR.strip : undefined}>
+        {cells.map((cell, index) => (
+          <Box width={(widths[index] ?? CELL_MAX) + 2} flexShrink={0}>
             <Text
               mono
               tabular
@@ -710,59 +730,231 @@ export function drawPane({ els, Input, Select, Svg, width, view, act, copy }: Pa
     const total = value.rows.length < value.limit ? value.rows.length : estimate
     const range =
       total === null ? `showing ${value.rows.length}` : `${compact(Math.max(total, value.rows.length))} rows · showing ${value.rows.length}`
+    const summary = `${value.ms} ms · read-only · ${value.columns.length} column${value.columns.length === 1 ? '' : 's'}`
 
-    const summary = [`${value.ms} ms`, 'read-only']
-    if (hidden > 0) summary.push(`${hidden} more column${hidden === 1 ? '' : 's'} to the right`)
+    const toolbar = (
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} flexWrap="wrap">
+        <Text>{range}</Text>
+        <Box flexDirection="row" gap={1} alignItems="center">
+          <Text dimColor size="footnote">
+            Limit
+          </Text>
+          {track(
+            ROW_LIMITS.map(one => ({ id: one, label: String(one), key: `limit-${one}` })),
+            view.limit,
+            id => void act.setLimit(id),
+            true,
+          )}
+        </Box>
+      </Box>
+    )
+
+    const lines: RenderElement[] = [
+      <Text mono dimColor size="footnote" wrap="truncate-end">
+        {value.query}
+      </Text>,
+      blank(),
+      drawCells(value.columns, true),
+      ...(value.rows.length === 0 ? [<Text dimColor>No rows.</Text>] : value.rows.map(row => drawCells(row, false))),
+      blank(),
+      <Text dimColor size="footnote">
+        {summary}
+      </Text>,
+    ]
+
+    return { lines, cols: Math.max(gridCols, value.query.length, summary.length), toolbar, toolbarRows: framedRows }
+  }
+
+  function ddlSection(source: string): Section {
+    const sourceLines = source.split('\n')
+    const gutter = String(sourceLines.length).length + 2
+    const toolbar = (
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center" flexShrink={0}>
+        <Text dimColor size="footnote">
+          SQL · generated from pg_catalog
+        </Text>
+        <Box flexDirection="row" gap={1} alignItems="center">
+          {Svg && line('copy')}
+          <Button key="copy" plain dimColor hotkey="y" onPress={() => copy(source)}>
+            Copy
+          </Button>
+        </Box>
+      </Box>
+    )
+
+    return {
+      lines: sourceLines.map(one => <Text wrap="truncate-end">{one}</Text>),
+      cols: gutter + Math.max(...sourceLines.map(one => one.length)) + 1,
+      toolbar,
+      toolbarRows: 1,
+      code: source,
+    }
+  }
+
+  let detailSpan: Span = { max: 0, page: 1 }
+  let leftSpan: Span = { max: 0, page: sectionCols }
+
+  function detailPanel(ref: DbRef) {
+    const relation = view.catalogs[ref.source]?.schemas
+      .find(schema => schema.name === ref.schema)
+      ?.relations.find(one => one.name === ref.name)
+    const known = view.relations[relationKey(ref.source, ref.schema, ref.name)]
+    const facts: string[] = []
+    if (relation?.rows != null) facts.push(`${compact(relation.rows)} rows`)
+    if (known) facts.push(`${known.columns.length} columns`)
+    else facts.push(KIND_WORD[ref.kind])
+    facts.push(ref.schema)
+    if (view.sources.length > 1) facts.push(view.sources.find(one => one.id === ref.source)?.label ?? ref.source)
+    const tabs = ref.kind === 'sequence' ? TABS.filter(one => one.id === 'ddl') : TABS
+
+    const section: Section | undefined = (() => {
+      if (view.detailStatus.phase === 'error') return { lines: [<Text color="error">{view.detailStatus.error}</Text>], cols: 0, toolbarRows: 0 }
+      if (view.tab === 'columns' && known) return columnsSection(known)
+      if (view.tab === 'rows' && view.preview) return rowsSection(view.preview, relation?.rows ?? null)
+      if (view.tab === 'ddl' && view.ddl !== null) return ddlSection(view.ddl)
+      if (view.detailStatus.phase === 'loading') return { lines: [<Text dimColor>Loading…</Text>], cols: 0, toolbarRows: 0 }
+
+      return undefined
+    })()
+
+    const note =
+      view.tab === 'columns' && known
+        ? `${known.columns.length} columns · ${known.constraints.length} constraint${known.constraints.length === 1 ? '' : 's'}`
+        : ''
+
+    // Rows down: the panel less its frame, the title's two, the tabs, the
+    // toolbar, the well's frame and the bar across; each with its gap.
+    const lines = section?.lines ?? []
+    const leftMax = Math.max(0, (section?.cols ?? 0) - sectionCols)
+    const toolbarRows = section?.toolbar ? section.toolbarRows + 1 : 0
+    const fit = Math.max(3, detailRows - edgeRows - 2 - 1 - framedRows - 1 - toolbarRows - edgeRows - (leftMax > 0 ? 1 : 0))
+    detailSpan = { max: Math.max(0, lines.length - fit), page: fit }
+    leftSpan = { max: leftMax, page: sectionCols }
+    const top = Math.min(scroll.detail, detailSpan.max)
+    const left = Math.min(scroll.left, leftSpan.max)
+    const place = fit + (isGraphic ? SLACK : 0)
+    const moveDown = (to: number) => void act.setScroll({ ...scroll, detail: to })
+    const moveAcross = (to: number) => void act.setScroll({ ...scroll, left: to })
+
+    // Code keeps its gutter in place: its lines are cut at the left instead.
+    const content = section?.code ? (
+      <Code
+        source={section.code
+          .split('\n')
+          .slice(top, top + place)
+          .map(one => one.slice(left))
+          .join('\n')}
+        language="sql"
+        startLine={top + 1}
+        wrap="truncate-end"
+      />
+    ) : (
+      lines.slice(top, top + place)
+    )
+    const contentCols = section?.code ? sectionCols : Math.max(section?.cols ?? 0, sectionCols)
 
     return (
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
-          <Text>{range}</Text>
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Text dimColor size="footnote">
-              Limit
+      <Box flexDirection="column" gap={1} width={isWide ? detailCols : undefined} height={detailRows} flexGrow={1} overflow="hidden" {...panel}>
+        <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
+          {tile(KIND_ICON[ref.kind], 32)}
+          <Box flexDirection="column" flexShrink={1} overflow="hidden">
+            <Text size="heading" weight="semibold" wrap="truncate-end">
+              {ref.name}
             </Text>
-            {track(
-              ROW_LIMITS.map(one => ({ id: one, label: String(one), key: `limit-${one}` })),
-              view.limit,
-              id => void act.setLimit(id),
-              true,
-            )}
+            <Text dimColor size="footnote" wrap="truncate-end">
+              {facts.join(' · ')}
+            </Text>
           </Box>
         </Box>
-        <Text mono dimColor size="footnote" wrap="truncate-end">
-          {value.query}
-        </Text>
-        <Box flexDirection="column">
-          {drawCells(value.columns, true)}
-          {value.rows.length === 0 && <Text dimColor>No rows.</Text>}
-          {value.rows.map(row => drawCells(row, false))}
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} overflow="hidden">
+          {track(
+            tabs.map(one => ({ id: one.id, label: one.label, key: `tab-${one.id}`, hotkey: one.hotkey })),
+            view.tab,
+            id => void act.setTab(id),
+          )}
+          <Box flexShrink={1} overflow="hidden">
+            <Text dimColor size="footnote" wrap="truncate-end">
+              {note}
+            </Text>
+          </Box>
         </Box>
-        <Text dimColor size="footnote">
-          {summary.join(' · ')}
-        </Text>
+        {section?.toolbar}
+        {section && (
+          <Box flexDirection="column" flexGrow={1} minHeight={0} overflow="hidden" {...well}>
+            <Box flexDirection="row" gap={1} flexGrow={1} minHeight={0} overflow="hidden">
+              <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+                <Box flexDirection="column" width={contentCols} marginLeft={section.code ? 0 : -left} flexShrink={0}>
+                  {content}
+                </Box>
+              </Box>
+              {vbar('detail', top, detailSpan, fit, moveDown)}
+            </Box>
+            {hbar(left, leftSpan, sectionCols, moveAcross)}
+          </Box>
+        )}
       </Box>
     )
   }
 
-  const body = isWide ? (
-    <Box flexDirection="row" gap={3}>
-      {tree}
-      {detail}
+  // Wide with nothing open: the right panel says what goes there.
+  const emptyPanel = (
+    <Box flexDirection="column" width={detailCols} height={detailRows} flexGrow={1} justifyContent="center" alignItems="center" {...panel}>
+      <Text dimColor>Pick a table, view or sequence to see its columns, rows and DDL.</Text>
     </Box>
-  ) : (
-    <Box flexDirection="column" gap={1}>
-      {tree}
+  )
+
+  const detail = view.selected ? detailPanel(view.selected) : isWide ? emptyPanel : false
+  const body = (
+    <Box flexDirection={isWide ? 'row' : 'column'} gap={1} height={bodyRows} overflow="hidden">
+      {treePanel}
       {detail}
     </Box>
   )
 
-  return (
+  const element = (
     <Box flexDirection="column" gap={1}>
       {notice}
       {view.sources.length > 0 && body}
     </Box>
   )
+
+  // The bar across sits on the detail panel's last inner row, inside the well's frame.
+  const layout: PaneLayout = {
+    isWide,
+    split: isWide ? treeCols : treeRows,
+    across: (isWide ? 0 : treeRows + 1) + detailRows - (isGraphic ? 5 : 3),
+    tree,
+    detail: detailSpan,
+    left: leftSpan,
+    for: detailFor,
+  }
+
+  return { element, layout }
+}
+
+/**
+ * Where a wheel or a scroll key moves the pane: the part under the pointer,
+ * across when it is over the object's lower bar or the object only moves
+ * across; with no pointer, the open object, else the tree.
+ */
+export function scrolled(view: DbView, layout: PaneLayout, by: number, pointer?: { column: number; row: number }): DbScroll {
+  const now = scrollOf(view, layout.for)
+  const isOverTree = pointer ? (layout.isWide ? pointer.column < layout.split : pointer.row < layout.split) : layout.for === ''
+  const part: 'tree' | 'detail' | 'left' = isOverTree
+    ? 'tree'
+    : layout.left.max > 0 && (layout.detail.max === 0 || (pointer !== undefined && pointer.row >= layout.across))
+      ? 'left'
+      : 'detail'
+  const step = part === 'left' ? by * 4 : pointer ? by * 3 : by
+
+  return { ...now, [part]: clamp(now[part] + step, 0, layout[part].max), for: layout.for }
+}
+
+/** The view's offsets, the detail's set back to the top left when another object or tab is open. */
+function scrollOf(view: DbView, detailFor: string): DbScroll {
+  const now = view.scroll ?? EMPTY_SCROLL
+
+  return now.for === detailFor ? now : { ...now, detail: 0, left: 0, for: detailFor }
 }
 
 /** The source the picker names: the one unfolded, else the open object's, else the first. */
@@ -781,6 +973,18 @@ function major(version: string): string {
   return version.split(/[ .]/)[0] ?? version
 }
 
+/** The tree's short spelling of a type: `timestamp with time zone` → `timestamptz`. */
+function shortType(type: string): string {
+  return type
+    .replace('timestamp with time zone', 'timestamptz')
+    .replace('timestamp without time zone', 'timestamp')
+    .replace('time with time zone', 'timetz')
+    .replace('time without time zone', 'time')
+    .replace('character varying', 'varchar')
+    .replace(/^character\b/, 'char')
+    .replace('double precision', 'float8')
+}
+
 function cellText(cell: string | null): string {
   if (cell === null) return 'NULL'
 
@@ -792,4 +996,8 @@ function compact(n: number): string {
   if (n < 1_000_000) return `${Math.round(n / 100) / 10}k`
 
   return `${Math.round(n / 100_000) / 10}M`
+}
+
+function clamp(n: number, low: number, high: number): number {
+  return Math.min(high, Math.max(low, n))
 }
