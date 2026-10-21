@@ -1,0 +1,5 @@
+{
+  "name": "claude-dbview",
+  "owner": { "name": "Eduard" },
+  "plugins": [{ "name": "dbview", "source": "./" }]
+}

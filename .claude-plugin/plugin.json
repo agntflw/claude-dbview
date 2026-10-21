@@ -1,0 +1,17 @@
+{
+  "name": "dbview",
+  "version": "0.1.0",
+  "description": "A PostgreSQL database view in a pane: schemas, tables, columns and row previews, like an IDE project tree.",
+  "author": {
+    "name": "Eduard"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "psql_path": {
+      "type": "string",
+      "title": "psql path",
+      "description": "The psql executable the engine runs. Leave as psql to search the PATH and the usual install folders.",
+      "default": "psql"
+    }
+  }
+}

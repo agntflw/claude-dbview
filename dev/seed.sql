@@ -1,0 +1,14 @@
+create schema sales;
+create schema inventory;
+create table sales.customer (id serial primary key, name text not null, email text unique, created_at timestamptz default now());
+create table sales.orders (id bigserial primary key, customer_id int not null references sales.customer(id), total numeric(10,2) not null, status text default 'new', note text);
+create view sales.big_orders as select * from sales.orders where total > 100;
+create materialized view sales.revenue_by_customer as select customer_id, sum(total) total from sales.orders group by 1;
+create table inventory.product (sku text primary key, title text not null, price numeric(8,2), tags text[], meta jsonb);
+create function sales.order_count(c int) returns bigint language sql as $$ select count(*) from sales.orders where customer_id = c $$;
+create sequence inventory.batch_seq;
+create table public.settings (key text primary key, value text);
+insert into sales.customer(name,email) select 'Customer '||g, 'c'||g||'@example.com' from generate_series(1,120) g;
+insert into sales.orders(customer_id,total,status,note) select (g%120)+1, (g*7.3)::numeric(10,2), case when g%3=0 then 'paid' else 'new' end, case when g%5=0 then null else 'note '||g end from generate_series(1,400) g;
+insert into inventory.product values ('A-1','Widget',9.99,'{red,small}','{"w":1}'),('B-2','Gadget | pipe',19.50,null,null),('C-3', E'multi\nline', null, '{}', '{"nested":{"a":[1,2]}}');
+refresh materialized view sales.revenue_by_customer;
