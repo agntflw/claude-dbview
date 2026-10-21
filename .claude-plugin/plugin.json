@@ -3,8 +3,13 @@
   "version": "0.2.0",
   "description": "A PostgreSQL database view in a pane: every database and Postgres container as an IDE-style tree, with columns, constraints, rows and DDL.",
   "author": {
-    "name": "Eduard"
+    "name": "AGENTFLOW",
+    "url": "https://agntflow.io"
   },
+  "homepage": "https://github.com/agntflw/claude-dbview#readme",
+  "repository": "https://github.com/agntflw/claude-dbview",
+  "license": "MIT",
+  "keywords": ["postgres", "postgresql", "database", "schema", "ddl", "docker", "mod"],
   "types": "./types/index.d.ts",
   "userConfig": {
     "psql_path": {

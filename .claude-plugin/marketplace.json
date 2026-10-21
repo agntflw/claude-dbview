@@ -1,5 +1,6 @@
 {
   "name": "claude-dbview",
-  "owner": { "name": "Eduard" },
-  "plugins": [{ "name": "dbview", "source": "./" }]
+  "description": "dbview: a read-only PostgreSQL database view for Claude Code.",
+  "owner": { "name": "AGENTFLOW", "url": "https://agntflow.io" },
+  "plugins": [{ "name": "dbview", "source": "./", "category": "database" }]
 }

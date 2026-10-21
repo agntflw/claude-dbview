@@ -24,14 +24,13 @@ Paste this into Claude Code, in any folder:
 
 ```
 Install the dbview plugin for Claude Code globally for me (user scope), from github.com/agntflw/claude-dbview.
-1. If a claude-dbview folder with .claude-plugin/marketplace.json is already on this machine
-   (the current folder, ~/Downloads, or ~/code), use it. Otherwise clone it to ~/.claude/plugins-src/claude-dbview
-   with git or gh. The repository is private: if the clone is refused, tell me to run gh auth login and stop.
-2. Run, with the folder from step 1: claude plugin install dbview --marketplace <folder> --scope user --config psql_path=psql
-3. Run: claude plugin list, and check dbview is installed and enabled.
-4. Check what it needs: psql --version, and docker --version if I use Postgres in Docker.
+1. Run: claude plugin install dbview --marketplace agntflw/claude-dbview --scope user --config psql_path=psql
+   If this Claude Code is too old for --marketplace, run instead:
+   claude plugin marketplace add agntflw/claude-dbview, then claude plugin install dbview@claude-dbview --scope user
+2. Run: claude plugin list, and check dbview is installed and enabled.
+3. Check what it needs: psql --version, and docker --version if I use Postgres in Docker.
    Tell me what is missing and how to install it on this machine, but do not install it.
-5. Tell me to start a new Claude Code session and type /db.
+4. Tell me to start a new Claude Code session and type /db.
 ```
 
 ### Add MySQL beside Postgres
@@ -106,7 +105,16 @@ claude plugin install dbview --marketplace agntflw/claude-dbview
 
 In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `agntflw/claude-dbview`, then Add plugin.
 
-This repository is private: it installs only for people who can read it on GitHub and whose machine already holds a git credential for github.com (an SSH key, or `gh auth login` then `gh auth setup-git`).
+On a Claude Code older than v2.1.292, add the marketplace first, then install from it:
+
+```
+claude plugin marketplace add agntflw/claude-dbview
+claude plugin install dbview@claude-dbview
+```
+
+To update: `claude plugin update dbview@claude-dbview`, or turn on auto-update for `claude-dbview` in `/plugin` › Marketplaces.
+
+On a claude.ai Team or Enterprise plan, an Owner can also add dbview for everyone in **Organization settings › Plugins & skills**; it then reaches each member's Claude Code as `dbview@synced`.
 
 ## If /db does not show up
 
@@ -157,3 +165,7 @@ docker run -d --name mig_after  -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=shop -p 
 #   create index orders_status_idx on sales.orders (status);
 #   alter table sales.orders add constraint total_positive check (total >= 0);
 ```
+
+## License
+
+Free and open source under the MIT License. Copyright (c) 2026 [AGENTFLOW](https://agntflow.io), see [LICENSE](LICENSE).

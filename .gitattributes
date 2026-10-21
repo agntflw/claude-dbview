@@ -1,0 +1,5 @@
+# Left out of `git archive` and GitHub's zip downloads, so the zip uploaded to claude.ai holds only the plugin.
+dev/ export-ignore
+tests/ export-ignore
+docs/ export-ignore
+.gitattributes export-ignore
