@@ -270,3 +270,77 @@ test('a wheel moves the part under the pointer', () => {
   const other = { ...view, scroll: { tree: 4, detail: 9, left: 9, for: 'env|sales.customer:rows' } }
   expect(scrolled(other, layout, 1)).toMatchObject({ tree: 4, detail: 1, left: 0, for: 'env|sales.orders:rows' })
 })
+
+for (const surface of ['desktop', 'terminal'] as const) {
+  test(`a foreign key is a link: one press opens the table it points at, Back returns (${surface})`, async ($, on) => {
+    host(on, { DATABASE_URL: HOST_URL })
+    await $.session.start({ cwd: '/', surface, isInteractive: true })
+    await $.command.run(run(''))
+    const ui = await $.ui.mount(pane(surface, 140))
+    const heading = async () => (await ui.findAll({ type: 'Text' })).find(one => one.props.size === 'heading')?.text
+
+    // From the Columns tab's reference: customer opens on Columns, Back names orders.
+    await ui.press({ key: 'r:env|sales.orders' })
+    await ui.press({ key: 'tab-columns' })
+    expect(await ui.find({ type: 'Button', key: 'back' })).toBeUndefined()
+    await ui.press({ key: 'fk-customer_id' })
+    expect(await heading()).toBe('customer')
+    expect(await ui.find({ text: '4 columns · 2 constraints' })).toBeDefined()
+    expect((await ui.find({ type: 'Button', key: 'back' }))?.text).toBe('← orders')
+
+    // The other end: customer lists who points at it, a press away.
+    expect(await ui.find({ text: /Referenced by$/ })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'ref-by-sales.orders.orders_customer_id_fkey' })).toBeDefined()
+
+    await ui.press({ key: 'back' })
+    expect(await heading()).toBe('orders')
+    expect(await ui.find({ type: 'Button', key: 'back' })).toBeUndefined()
+
+    // From the constraint, then back along the key from customer: a trail of two.
+    await ui.press({ key: 'fk-def-orders_customer_id_fkey' })
+    expect(await heading()).toBe('customer')
+    await ui.press({ key: 'ref-by-sales.orders.orders_customer_id_fkey' })
+    expect(await heading()).toBe('orders')
+    expect((await ui.find({ type: 'Button', key: 'back' }))?.text).toBe('← customer')
+    await ui.press({ key: 'back' })
+    await ui.press({ key: 'back' })
+    expect(await heading()).toBe('orders')
+    expect(await ui.find({ type: 'Button', key: 'back' })).toBeUndefined()
+
+    // In the tree, the column reads `customer_id → customer` and follows it too.
+    expect(await ui.find({ text: '→ customer' })).toBeDefined()
+    await ui.press({ key: 'r:env|sales.orders:customer_id' })
+    expect(await heading()).toBe('customer')
+    // Unfolded in the tree: its columns show, created_at in the tree's short type.
+    expect(await ui.find({ type: 'Button', key: 'r:env|sales.customer' })).toBeDefined()
+    expect(await ui.find({ text: 'timestamptz' })).toBeDefined()
+
+    // A press in the tree starts afresh: no Back.
+    await ui.press({ key: 'r:env|sales.orders' })
+    expect(await ui.find({ type: 'Button', key: 'back' })).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
+test('a jump unfolds the tree to its target and brings it into view', async ($, on) => {
+  host(on, { DATABASE_URL: HOST_URL })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(run(''))
+  const ui = await $.ui.mount(pane('terminal', 44, 30))
+
+  // A filter that hides customer gives way to the jump.
+  await ui.press({ key: 'r:env|sales.orders' })
+  await ui.press({ key: 'tab-columns' })
+  await ui.input({ key: 'filter', text: 'orders', kind: 'change' })
+  expect(await ui.find({ type: 'Button', key: 'r:env|sales.customer' })).toBeUndefined()
+  await ui.press({ key: 'fk-customer_id' })
+  expect(await ui.find({ type: 'Button', key: 'r:env|sales.customer' })).toBeDefined()
+  expect(await ui.find({ text: 'timestamptz' })).toBeDefined()
+
+  // The tree scrolled away from orders: Back brings it into view again.
+  for (let step = 0; step < 30; step++) await ui.press({ key: 'tree-down' })
+  expect(await ui.find({ type: 'Button', key: 'r:env|sales.orders' })).toBeUndefined()
+  await ui.press({ key: 'back' })
+  expect(await ui.find({ type: 'Button', key: 'r:env|sales.orders' })).toBeDefined()
+  await ui.unmount()
+})

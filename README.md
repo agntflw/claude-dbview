@@ -81,9 +81,11 @@ Prove it:
 
 Each database is a root of the tree, with its schemas as packages inside, then Tables, Views, Materialized views, Sequences and Functions folders, then the objects and their columns. Open a table or view to see:
 
-- **Columns**: name, type, nullable, primary key or `→ schema.table(column)` reference, defaults, then the constraints (keys, foreign keys, checks, not null) and indexes.
+- **Columns**: name, type, nullable, primary key or `→ schema.table(column)` reference, defaults, then the constraints (keys, foreign keys, checks, not null), indexes, and the foreign keys elsewhere that point at it (**Referenced by**).
 - **Rows**: the first 50, 100, 500 or 1000 rows in key order, with the query shown.
 - **DDL**: the table as a migration would create it (its sequences, the table with defaults and named constraints, indexes, `OWNED BY`), numbered, with Copy.
+
+Foreign keys are links. Press a `→ schema.table(column)` reference, a foreign key constraint, a `← schema.table(column)` line under Referenced by, or a key column in the tree (it reads `customer_id → customer`), and the table at the other end opens on the same tab, unfolded and scrolled into view in the tree. **← name** at the top right goes back, one jump at a time.
 
 Every Postgres container Docker is running shows up by itself, so the databases a migration test leaves behind (say `mig_before` and `mig_after`) sit side by side in the tree to compare.
 
@@ -132,7 +134,7 @@ On a claude.ai Team or Enterprise plan, an Owner can also add dbview for everyon
 /db refresh                           list the databases again and reload the open ones
 ```
 
-The pane lists, in order: the databases saved with `/db connect`, the one named by `DATABASE_URL` or the `PG*` variables (unless a saved one is the same), then each running Postgres container. Press a database to unfold it (its catalog loads the first time), or pick one in the switcher at the top. Press a schema or folder to fold it, press a table to open it (press again to fold its columns), and filter the tree by table or column name. With the pane focused: `c`, `w`, `d` switch to Columns, Rows, DDL; `r` refreshes; `y` copies the DDL.
+The pane lists, in order: the databases saved with `/db connect`, the one named by `DATABASE_URL` or the `PG*` variables (unless a saved one is the same), then each running Postgres container. Press a database to unfold it (its catalog loads the first time), or pick one in the switcher at the top. Press a schema or folder to fold it, press a table to open it (press again to fold its columns), and filter the tree by table or column name. On the terminal, with the pane focused: `c`, `w`, `d` switch to Columns, Rows, DDL; `r` refreshes; `y` copies the DDL; `b` goes back after a jump.
 
 The pane follows its width: the tree and the open object sit side by side when it is wide, the object under the tree when it is narrow, and the tree takes about a third of a wide pane. Each panel scrolls on its own: the wheel moves the part under the pointer, and over the bar under the open object it moves the columns sideways. The ▴ ▾ ◂ ▸ steps at the ends of the bars do the same with a click.
 
