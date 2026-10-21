@@ -11,10 +11,10 @@ A PostgreSQL database view for Claude Code, in a pane beside the chat: every dat
 1. Install, once, for every project (user scope):
 
    ```
-   claude plugin install dbview --marketplace agntflw/claude-dbview
+   claude plugin install dbview --marketplace agntflw/claude-dbview --config psql_path=psql
    ```
 
-2. In any Claude Code session, type `/db`. The pane opens on the databases it finds: your `DATABASE_URL` or `PG*` variables, and every running Postgres container.
+2. Start a new Claude Code session (one already open does not see the plugin until you run `/reload-plugins` in it), then type `/db`. The pane opens on the databases it finds: your `DATABASE_URL` or `PG*` variables, and every running Postgres container.
 3. To add another one: `/db connect postgres://user:password@host:5432/database [name]`.
 4. Press a database, then a table. Switch between Columns, Rows (pick 50, 100, 500 or 1000) and DDL.
 
@@ -107,6 +107,13 @@ claude plugin install dbview --marketplace agntflw/claude-dbview
 In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `agntflw/claude-dbview`, then Add plugin.
 
 This repository is private: it installs only for people who can read it on GitHub and whose machine already holds a git credential for github.com (an SSH key, or `gh auth login` then `gh auth setup-git`).
+
+## If /db does not show up
+
+1. Start a new session, or run `/reload-plugins` in the open one. A plugin installed from a shell loads in sessions started after the install.
+2. Check `claude --version`: mods (plugins with a hooks module, like this one) need a recent Claude Code. Run `claude update` if it is old.
+3. Run `claude plugin list`: dbview should say enabled. In a session, `/plugin` shows any error loading it.
+4. The "userConfig option not yet set" note after install is harmless: `psql_path` defaults to `psql`.
 
 ## Use
 
