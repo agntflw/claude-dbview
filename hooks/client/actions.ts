@@ -37,7 +37,14 @@ export function createActions(engine: Engine, port: ViewPort) {
 
   /** Lists the sources and reloads every catalog already open. */
   async function refresh(): Promise<void> {
-    await port.set(v => ({ ...v, relations: {}, preview: null, ddl: null }))
+    // Columns load again on demand, so fold every table but the open one.
+    await port.set(v => ({
+      ...v,
+      relations: {},
+      preview: null,
+      ddl: null,
+      expanded: v.expanded.filter(id => !id.startsWith('r:') || (v.selected !== null && id === relationId(v.selected.source, v.selected.schema, v.selected.name))),
+    }))
     await loadSources()
     const now = await port.get()
     const open = Object.keys(now.catalogs).filter(id => now.sources.some(one => one.id === id))

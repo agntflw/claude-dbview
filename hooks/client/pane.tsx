@@ -180,45 +180,38 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   const detailFor = view.selected ? `${relationKey(view.selected.source, view.selected.schema, view.selected.name)}:${view.tab}` : ''
   const scroll = scrollOf(view, detailFor)
 
-  // A vertical bar beside a scrolled part: a thin track, the thumb sized to
-  // what shows, a step up and down at its ends. Only while there is more.
+  // A vertical bar beside a scrolled part: a track, the thumb sized to what
+  // shows, a step up and down at its ends. Only while there is more. Every
+  // cell of the track is a press that brings that part of the list into view.
   function vbar(id: string, offset: number, span: Span, shown: number, move: (to: number) => void) {
     if (span.max <= 0) return false
     const step = Math.max(1, Math.floor(span.page / 2))
-    const up = (
-      <Button key={`${id}-up`} plain onPress={() => move(Math.max(0, offset - step))}>
-        <Text color={COLOR.muted}>{isGraphic ? '▲' : '▴'}</Text>
-      </Button>
-    )
-    const down = (
-      <Button key={`${id}-down`} plain onPress={() => move(Math.min(span.max, offset + step))}>
-        <Text color={COLOR.muted}>{isGraphic ? '▼' : '▾'}</Text>
-      </Button>
-    )
-    if (isGraphic) {
-      return (
-        <Box flexDirection="column" alignItems="center" flexShrink={0}>
-          {up}
-          <Box flexDirection="column" flexGrow={1} width={1} backgroundColor={COLOR.track}>
-            <Box flexGrow={offset} />
-            <Box flexGrow={span.page} minHeight={1} backgroundColor={COLOR.thumb} />
-            <Box flexGrow={span.max - offset} />
-          </Box>
-          {down}
-        </Box>
-      )
-    }
     const track = Math.max(1, shown - 2)
     const thumb = clamp(Math.round((track * span.page) / (span.max + span.page)), 1, track)
     const from = Math.round(((track - thumb) * offset) / span.max)
+    const at = (index: number) => Math.round((span.max * index) / Math.max(1, track - 1))
 
     return (
-      <Box flexDirection="column" flexShrink={0} width={1}>
-        {up}
-        {Array.from({ length: track }, (_, index) =>
-          index >= from && index < from + thumb ? <Text color={COLOR.muted}>┃</Text> : <Text dimColor>│</Text>,
-        )}
-        {down}
+      <Box flexDirection="column" alignItems="center" flexShrink={0} width={1} overflow="hidden">
+        <Button key={`${id}-up`} plain onPress={() => move(Math.max(0, offset - step))}>
+          <Text color={COLOR.muted}>{isGraphic ? '▲' : '▴'}</Text>
+        </Button>
+        {Array.from({ length: track }, (_, index) => (
+          <Button key={`${id}-at-${index}`} plain onPress={() => move(at(index))}>
+            {index >= from && index < from + thumb ? (
+              <Text mono color={isGraphic ? COLOR.thumb : COLOR.muted}>
+                ┃
+              </Text>
+            ) : (
+              <Text mono color={isGraphic ? COLOR.track : undefined} dimColor={!isGraphic}>
+                │
+              </Text>
+            )}
+          </Button>
+        ))}
+        <Button key={`${id}-down`} plain onPress={() => move(Math.min(span.max, offset + step))}>
+          <Text color={COLOR.muted}>{isGraphic ? '▼' : '▾'}</Text>
+        </Button>
       </Box>
     )
   }
@@ -447,7 +440,20 @@ export function drawPane({ els, Input, Select, Svg, width, height, view, act, co
   // A tree row. The name keeps its room and the count or type at the right
   // gives way first; what still does not fit is cut at the panel's edge.
   const drawRow = (row: Row) => {
-    const chevron = row.isOpen === undefined ? spacer() : line(row.isOpen ? 'chevronDown' : 'chevronRight')
+    // The chevron folds the row too: a press of its own, as the name is.
+    const chevron = (
+      <Box width={2} flexShrink={0}>
+        {row.isOpen === undefined ? (
+          spacer()
+        ) : row.onPress ? (
+          <Button key={`${row.key}:fold`} plain onPress={row.onPress}>
+            <Text color={COLOR.muted}>{Svg ? (row.isOpen ? '▾' : '▸') : glyphOf(row.isOpen ? 'chevronDown' : 'chevronRight')}</Text>
+          </Button>
+        ) : (
+          line(row.isOpen ? 'chevronDown' : 'chevronRight')
+        )}
+      </Box>
+    )
     const accent = accentOf(row.icon)
     const icon = accent ? line(row.icon, accent) : row.isTile ? tile(row.icon, 20) : line(row.icon)
     const isGroup = row.depth === 1
