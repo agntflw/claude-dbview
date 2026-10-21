@@ -33,6 +33,43 @@ Install the Claude Code plugin in <path to the claude-dbview folder> globally fo
 4. Tell me to start a new session and type /db.
 ```
 
+### Add MySQL beside Postgres
+
+dbview reads PostgreSQL only. To have Claude add MySQL (8.4 LTS, the current line, or pin `mysql:8.4.5`) to your own copy, open Claude Code in the cloned `claude-dbview` folder and paste:
+
+```
+Add MySQL support to this dbview mod, beside PostgreSQL, without changing how Postgres works.
+
+Set up a test database first:
+- Run MySQL 8.4 in Docker: docker run -d --name mysql84 -e MYSQL_ROOT_PASSWORD=dev
+  -e MYSQL_DATABASE=shop -p 33306:3306 mysql:8.4  (use mysql:8.4.5 if I ask for that exact version).
+- Wait until it accepts connections, then load a MySQL version of dev/seed.sql
+  (schemas become databases; serial becomes AUTO_INCREMENT; keep the same tables, keys and rows).
+
+Then extend the mod, following its layout (types first, then engine, then pane):
+1. types/index.d.ts: add an engine field ('postgres' | 'mysql') to DbSource, and keep every request shape.
+2. hooks/engine/: add a MySQL driver next to psql.ts. Run the mysql client inside the container
+   (docker exec -i <container> mysql -N -B ...) or on the host for mysql:// URLs.
+   Pass the password in MYSQL_PWD, never on the command line.
+   Every session is read-only: SET SESSION TRANSACTION READ ONLY and max_execution_time=10000.
+   Build each answer as one JSON document with JSON_OBJECT and JSON_ARRAYAGG
+   from information_schema (catalog, columns, constraints, indexes).
+   Use SHOW CREATE TABLE / VIEW for the DDL.
+3. hooks/engine/docker.ts: also discover mysql and mariadb containers
+   (user root with MYSQL_ROOT_PASSWORD, or MYSQL_USER and MYSQL_PASSWORD; database from MYSQL_DATABASE).
+4. /db connect: accept mysql:// URLs as well as postgres://.
+5. Pane: show the engine and version on each database row and in the switcher
+   (MySQL 8.4 · docker). MySQL has no schemas inside a database, so skip the schema level for it.
+   Sequences and materialized views do not exist there.
+
+Prove it:
+- Extend dev/engine-e2e.ts with MySQL checks against mysql84
+  (catalog, columns, a foreign key, an index, 50 rows in key order, DDL),
+  and re-record tests/fixtures.ts.
+- Add pane tests for a MySQL source. Run claude plugin validate . and claude plugin test .
+- Show me the pane with /db, with the Postgres and the MySQL databases side by side.
+```
+
 ## What it shows
 
 Each database is a root of the tree, with its schemas as packages inside, then Tables, Views, Materialized views, Sequences and Functions folders, then the objects and their columns. Open a table or view to see:
