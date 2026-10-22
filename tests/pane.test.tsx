@@ -4,6 +4,7 @@ import type { TestBody } from 'claude-code/testing'
 import { scrolled, shouldLift } from '../hooks/client/pane'
 import type { PaneLayout } from '../hooks/client/pane'
 import { EMPTY_VIEW } from '../hooks/client/state'
+import { DARK, LIGHT, SYSTEM, TERMINAL } from '../hooks/client/theme'
 import { callKey } from './call-key'
 import { RECORDED } from './fixtures'
 
@@ -418,7 +419,8 @@ for (const surface of ['desktop', 'terminal'] as const) {
     // The Columns tab's reference keeps the style it had before it was a link.
     const reference = await ui.find({ type: 'Button', key: 'fk-customer_id' })
     expect(reference?.props.hover).toBeUndefined()
-    expect((reference?.children[0] as { props: unknown }).props).toEqual({ mono: true, size: 'footnote', color: '#6aa6ee', wrap: 'truncate-end' })
+    const link = (surface === 'desktop' ? SYSTEM : TERMINAL).link
+    expect((reference?.children[0] as { props: unknown }).props).toEqual({ mono: true, size: 'footnote', color: link, wrap: 'truncate-end' })
 
     // The tree's key column shows its type, as every column does.
     expect(await ui.find({ type: 'Button', key: 'r:env|sales.orders:customer_id' })).toBeDefined()
@@ -426,3 +428,137 @@ for (const surface of ['desktop', 'terminal'] as const) {
     await ui.unmount()
   })
 }
+
+// Themes. The surfaces do not say whether the app is light or dark, so
+// `system` leaves the text to the surface and lays faint layers where the
+// others paint fills; `light` and `dark` paint every word themselves, so no
+// word lands in the app's colour on a panel of the other theme.
+
+type Drawn = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+
+/** Every word drawn in the surface's own colour: no colour or dim of its own, nor of a Text or Button around it. */
+function uncoloured(node: unknown, isInked = false, out: string[] = []): string[] {
+  if (typeof node === 'string') {
+    if (!isInked && node.trim() !== '') out.push(node)
+
+    return out
+  }
+  if (Array.isArray(node)) {
+    for (const one of node) uncoloured(one, isInked, out)
+
+    return out
+  }
+  const element = node as Drawn
+  if (!element || typeof element !== 'object') return out
+  const props = element.props ?? {}
+  const isText = element.type === 'Text' || element.type === 'Button'
+  const inked = isInked || (isText && (props.color !== undefined || props.dimColor === true))
+  if (element.type === 'Button' && typeof props.label === 'string' && !element.children?.length && !inked) out.push(props.label)
+  for (const child of element.children ?? []) uncoloured(child, inked, out)
+
+  return out
+}
+
+/** Every value a prop named `name` takes anywhere in the tree. */
+function valuesOf(node: unknown, name: string, out: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    for (const one of node) valuesOf(one, name, out)
+
+    return out
+  }
+  const element = node as Drawn
+  if (!element || typeof element !== 'object') return out
+  if (element.props && name in element.props) out.push(element.props[name])
+  if (element.props?.hover && typeof element.props.hover === 'object') valuesOf({ props: element.props.hover }, name, out)
+  for (const child of element.children ?? []) valuesOf(child, name, out)
+
+  return out
+}
+
+const TABS = ['tab-rows', 'tab-columns', 'tab-ddl'] as const
+
+test('/db theme says which theme the pane is in, keeps a new one, and refuses a word it does not know', async ($, on) => {
+  host(on, { DATABASE_URL: HOST_URL })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  expect((await $.command.run(run('theme'))).text).toBe(
+    'The database view follows the app’s light or dark theme (system). Use /db theme system, light or dark.',
+  )
+  expect((await $.command.run(run('theme light'))).text).toBe('The database view now stays light.')
+  expect((await $.command.run(run('theme sepia'))).text).toBe('The database view stays light (light). Use /db theme system, light or dark.')
+  expect((await $.command.run(run('theme dark'))).text).toBe('The database view now stays dark.')
+  expect((await $.command.run(run('theme system'))).text).toBe('The database view now follows the app’s light or dark theme.')
+})
+
+for (const mode of ['light', 'dark'] as const) {
+  test(`the ${mode} theme paints every word and panel itself, on every tab`, async ($, on) => {
+    const palette = mode === 'light' ? LIGHT : DARK
+    const other = mode === 'light' ? DARK : LIGHT
+    host(on, { DATABASE_URL: HOST_URL })
+    await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+    await $.command.run(run(''))
+    await $.command.run(run(`theme ${mode}`))
+
+    for (const width of [140, 60]) {
+      const ui = await $.ui.mount(pane('desktop', width))
+      await ui.press({ key: 'r:env|sales.orders' })
+      for (const tab of TABS) {
+        await ui.press({ key: tab })
+        const tree = await ui.drawn()
+        expect(uncoloured(tree)).toEqual([])
+        const fills = valuesOf(tree, 'backgroundColor').filter(one => one !== undefined)
+        expect(fills).toContain(palette.panel)
+        expect(fills).toContain(palette.pill)
+        // Nothing of the other theme is left anywhere, the icons included.
+        const json = JSON.stringify(tree)
+        for (const colour of [other.panel, other.well, other.pill, other.border, other.muted]) expect(json).not.toContain(colour)
+        expect(valuesOf(tree, 'color')).toContain(palette.text)
+        expect(valuesOf(tree, 'color')).not.toContain(other.text)
+      }
+      await ui.unmount()
+    }
+  })
+}
+
+test('the system theme leaves the text to the app and lays only faint layers that sit on light and dark', async ($, on) => {
+  host(on, { DATABASE_URL: HOST_URL })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.command.run(run(''))
+  const ui = await $.ui.mount(pane('desktop', 140))
+  await ui.press({ key: 'r:env|sales.orders' })
+
+  for (const tab of TABS) {
+    await ui.press({ key: tab })
+    const tree = await ui.drawn()
+    // No text colour of either theme: the body text is the app's.
+    expect(uncoloured(tree).length).toBeGreaterThan(0)
+    const inks = valuesOf(tree, 'color')
+    for (const colour of [DARK.text, DARK.column, LIGHT.text, LIGHT.column]) expect(inks).not.toContain(colour)
+    // Fills and edges are see-through layers, or nothing.
+    for (const name of ['backgroundColor', 'borderColor']) {
+      for (const one of valuesOf(tree, name)) if (one !== undefined) expect(String(one)).toMatch(/^rgba\(|^transparent$/)
+    }
+    // A tile is its icon's colour, faint.
+    const tiles = (await ui.findAll({ type: 'Svg' })).map(one => String(one.props.source)).filter(one => one.includes('<rect'))
+    expect(tiles.length).toBeGreaterThan(0)
+    for (const one of tiles) expect(one).toContain(`fill-opacity="${SYSTEM.tileOpacity}"`)
+  }
+  await ui.unmount()
+})
+
+test('the terminal keeps its own colours whatever the theme', async ($, on) => {
+  host(on, { DATABASE_URL: HOST_URL })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  await $.command.run(run(''))
+  const ui = await $.ui.mount(pane('terminal', 140))
+  await ui.press({ key: 'r:env|sales.orders' })
+  await ui.press({ key: 'tab-columns' })
+  const drawings: string[] = []
+
+  for (const mode of ['system', 'light', 'dark'] as const) {
+    await $.command.run(run(`theme ${mode}`))
+    drawings.push(JSON.stringify(await ui.drawn()))
+  }
+  await ui.unmount()
+  expect(drawings[1]).toBe(drawings[0])
+  expect(drawings[2]).toBe(drawings[0])
+})

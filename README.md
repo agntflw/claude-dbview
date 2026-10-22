@@ -132,11 +132,16 @@ On a claude.ai Team or Enterprise plan, an Owner can also add dbview for everyon
 /db connect postgres://u:p@host:5432/db [name]   save a database under a name (default: its database name)
 /db forget <name>                     forget a saved database
 /db refresh                           list the databases again and reload the open ones
+/db theme [system|light|dark]         the pane's colours in the desktop app (default: system)
 ```
 
 The pane lists, in order: the databases saved with `/db connect`, the one named by `DATABASE_URL` or the `PG*` variables (unless a saved one is the same), then each running Postgres container. Press a database to unfold it (its catalog loads the first time), or pick one in the switcher at the top. Press a schema or folder to fold it, press a table to open it (press again to fold its columns), and filter the tree by table or column name. On the terminal, with the pane focused: `c`, `w`, `d` switch to Columns, Rows, DDL; `r` refreshes; `y` copies the DDL; `b` goes back after a jump.
 
 The pane follows its width: the tree and the open object sit side by side when it is wide, the object under the tree when it is narrow, and the tree takes about a third of a wide pane. In the Claude desktop app the pane scrolls as one page with the wheel or trackpad, and a table opens beside (or, when narrow, right under) the row you picked; once you stop scrolling, the open table comes back to the top of the window (scrolling down over the table itself leaves it, so its rows can be read). In a terminal each panel scrolls on its own: the wheel moves the part under the pointer, and over the bar under the open object it moves the columns sideways. The ▴ ▾ ◂ ▸ steps at the ends of the bars do the same with a click; the ◂ ▸ bar over a wide grid works in the desktop app too.
+
+### Light and dark
+
+In the Claude desktop app (and VS Code) the pane follows the app's light or dark theme by itself: `system`, the default, draws its text in the app's own colour and its panels, pills and lines as faint see-through layers, so the same pane sits on either theme and changes with it. `/db theme light` or `/db theme dark` paints the panels in fixed warm off-whites or warm greys instead; pick the one that matches your app, since buttons always take the app's own text colour. `/db theme system` goes back. The choice is kept across sessions. The terminal keeps its own colours whatever the setting.
 
 ## Update
 

@@ -1,6 +1,9 @@
 // The pane's icon set, from the design direction: 16-unit line icons, drawn
 // as small SVG images where the surface has them and as one glyph on the
 // terminal. Objects sit on a tinted tile, as pinned items do in the sidebar.
+// The colours are the theme's (./theme).
+
+import type { Palette } from './theme'
 
 export type IconName =
   | 'chevronRight'
@@ -68,59 +71,26 @@ const GLYPHS: Record<IconName, string> = {
   refresh: '↻',
 }
 
-export const COLOR = {
-  text: '#ecebe6',
-  column: '#c9c7c0',
-  muted: '#9c9a94',
-  pill: '#30302e',
-  border: '#3a3936',
-  ground: '#1f1e1d',
-  connected: '#6cc070',
-  link: '#6aa6ee',
-  /** The tree's and the open object's panels, a step darker than the pane. */
-  panel: '#1a1918',
-  /** The well a section scrolls in, darker again. */
-  well: '#141413',
-  /** A row or a segment under the pointer. */
-  hover: '#262523',
-  /** A table's header strip. */
-  strip: '#262624',
-  /** Scrollbar track and thumb. */
-  track: '#262523',
-  thumb: '#5a5852',
-}
-
-/** Icon colour and tile colour per object kind. */
-export const TINT: Partial<Record<IconName, { icon: string; tile: string }>> = {
-  database: { icon: '#6cc070', tile: '#243526' },
-  table: { icon: '#6cc070', tile: '#243526' },
-  view: { icon: '#6aa6ee', tile: '#1f2e42' },
-  matview: { icon: '#5cbfb5', tile: '#1d3431' },
-  function: { icon: '#a08ff0', tile: '#2c2843' },
-  sequence: { icon: '#e0a94e', tile: '#3a2f1e' },
-  key: { icon: '#e0a94e', tile: '#3a2f1e' },
-  link: { icon: '#6aa6ee', tile: '#1f2e42' },
-}
-
 const STROKE = 'fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"'
 
 /** A bare 16 px line icon. */
-export function lineSvg(name: IconName, color: string = COLOR.muted): string {
+export function lineSvg(name: IconName, color: string): string {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">` +
     `<path d="${PATHS[name]}" stroke="${color}" ${STROKE}/></svg>`
   )
 }
 
-/** A 14 px icon on a tinted rounded tile, `size` px square. */
-export function tileSvg(name: IconName, size: number): string {
-  const tint = TINT[name] ?? { icon: COLOR.muted, tile: COLOR.pill }
+/** A 14 px icon on a tinted rounded tile, `size` px square, in the palette's colours. */
+export function tileSvg(name: IconName, size: number, palette: Palette): string {
+  const tint = palette.tint[name] ?? { icon: palette.muted, tile: palette.tileOpacity === undefined ? palette.pill : palette.muted }
+  const fill = palette.tileOpacity === undefined ? `fill="${tint.tile}"` : `fill="${tint.tile}" fill-opacity="${palette.tileOpacity}"`
   const scale = (size * 0.7) / 16
   const offset = (size - 16 * scale) / 2
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">` +
-    `<rect width="${size}" height="${size}" rx="${Math.round(size * 0.3)}" fill="${tint.tile}"/>` +
+    `<rect width="${size}" height="${size}" rx="${Math.round(size * 0.3)}" ${fill}/>` +
     `<g transform="translate(${offset} ${offset}) scale(${scale})">` +
     `<path d="${PATHS[name]}" stroke="${tint.icon}" ${STROKE}/></g></svg>`
   )
