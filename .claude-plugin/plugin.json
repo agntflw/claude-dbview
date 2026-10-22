@@ -9,6 +9,7 @@
   "homepage": "https://github.com/agntflw/claude-dbview#readme",
   "repository": "https://github.com/agntflw/claude-dbview",
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "keywords": ["postgres", "postgresql", "database", "schema", "ddl", "docker", "mod"],
   "types": "./types/index.d.ts",
   "userConfig": {

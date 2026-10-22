@@ -157,6 +157,16 @@ Then run `/reload-plugins` in an open session, or start a new one. Installed fro
 - For saved and `DATABASE_URL` databases: `psql` (the PostgreSQL client) on the machine running Claude Code. The engine looks on the PATH and in the usual Homebrew, Postgres.app and Linux locations; set another path with the `psql_path` option in `/config`.
 - For containers: `docker` on that machine. The engine runs `docker exec … psql` inside the container as its `POSTGRES_USER` on its `POSTGRES_DB`, so it needs no published port, password or host psql.
 
+## What it runs, reads and keeps
+
+dbview runs only on your machine and sends nothing anywhere except to the databases you point it at. No telemetry, no other network calls.
+
+- **Runs:** `psql`, to query the databases saved with `/db connect` or named by `DATABASE_URL` and the `PG*` variables. With Docker: `docker ps` and `docker inspect` to find running Postgres containers, then `docker exec … psql` inside each one.
+- **Queries:** read-only. Every request runs in a read-only session with a 10 second statement timeout, and reads the catalog (`pg_catalog`, `information_schema`) and, on the Rows tab, the first 50 to 1000 rows of the table you open.
+- **Reads:** the environment variables `DATABASE_URL`, `PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE` and `USER`, and each container's `POSTGRES_USER` and `POSTGRES_DB` from `docker inspect`.
+- **Keeps:** the URLs saved with `/db connect`, including any password they contain, and the theme you picked, in Claude Code's storage for this plugin on your machine. `/db forget <name>` removes a saved URL. Passwords go to `psql` in `PGPASSWORD`, never on a command line.
+- **Clipboard:** Copy on the DDL tab (or `y` on the terminal) puts the DDL on your clipboard.
+
 ## How it is built
 
 - `types/index.d.ts`: the contract between the two sides (sources, catalog, relation detail, preview, DDL; the pane's view state).
