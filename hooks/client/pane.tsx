@@ -16,9 +16,11 @@ import type {
 } from '../../types'
 import { ROW_LIMITS } from './actions'
 import type { Actions } from './actions'
-import { COLOR, SPACER_SVG, glyphOf, lineSvg, tileSvg } from './icons'
+import { SPACER_SVG, glyphOf, lineSvg, tileSvg } from './icons'
 import type { IconName } from './icons'
 import { EMPTY_SCROLL, relationKey, sourceId } from './state'
+import { TERMINAL, paletteOf } from './theme'
+import type { ThemeMode } from './theme'
 import { KIND_ICON, compact, listTree, stateOf } from './tree'
 import type { Row } from './tree'
 
@@ -31,6 +33,8 @@ import type { Row } from './tree'
 // the panels stand at their whole height and the body scrolls as one. The
 // open object moves across with its own bar on every surface.
 // A foreign key is a link: a press opens the table it points at.
+// The colours are the theme's (./theme): a graphical surface draws the one
+// asked for, the terminal its own.
 // Nothing here reaches a database.
 
 type Table = Elements['terminal']
@@ -51,6 +55,8 @@ export type PaneInput = {
   act: Actions
   /** Puts text on the clipboard of the surface drawing the pane. */
   copy: (text: string) => void
+  /** Which palette a graphical surface draws in; absent, `system`. */
+  theme?: ThemeMode
 }
 
 /** How far one part of the pane can move, and how much of it shows at once. */
@@ -107,9 +113,13 @@ const CONSTRAINT_ICON: Record<DbConstraint['kind'], IconName> = {
   notnull: 'notnull',
 }
 
-export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0, view, act, copy }: PaneInput): PaneDrawing {
+export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0, view, act, copy, theme = 'system' }: PaneInput): PaneDrawing {
   const { Box, Text, Button, Code } = els
   const isGraphic = Svg !== undefined
+  // A palette that paints its panels paints its text too, or text in the
+  // app's own colour could land on a panel of the other theme.
+  const P = isGraphic ? paletteOf(theme) : TERMINAL
+  const ink = P.text ? { color: P.text } : {}
   // A graphical surface moves the body's window first and asks after, so a
   // window drawn inside the panels fought it and the pane jumped back on every
   // tick: there the panels stand whole and the window is the scroll.
@@ -131,9 +141,9 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
   // frame costs is counted in its padding, a cell a side, and about a row.
   const edgeRows = isGraphic ? 1 : 0
   const padCols = isGraphic ? 2 : 0
-  const panel = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.panel, paddingX: 1 } as const) : {}
-  const well = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.well, paddingX: 1 } as const) : {}
-  const frame = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.border, backgroundColor: COLOR.ground, paddingX: 1 } as const) : {}
+  const panel = isGraphic ? ({ borderStyle: 'round', borderColor: P.border, backgroundColor: P.panel, paddingX: 1 } as const) : {}
+  const well = isGraphic ? ({ borderStyle: 'round', borderColor: P.border, backgroundColor: P.well, paddingX: 1 } as const) : {}
+  const frame = isGraphic ? ({ borderStyle: 'round', borderColor: P.border, backgroundColor: P.ground, paddingX: 1 } as const) : {}
   const framedRows = isGraphic ? 2 : 1
   // A rounded pill behind a chosen item, a fainter one under the pointer: a
   // Box's corners round only with a border, so each item has one in the
@@ -144,31 +154,31 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
       ? ({
           key: `${key}:pill`,
           borderStyle: 'round',
-          borderColor: isOn ? COLOR.pill : ground,
-          backgroundColor: isOn ? COLOR.pill : undefined,
-          hover: isOn ? undefined : { borderColor: COLOR.hover, backgroundColor: COLOR.hover },
+          borderColor: isOn ? P.pill : ground,
+          backgroundColor: isOn ? P.pill : undefined,
+          hover: isOn ? undefined : { borderColor: P.hover, backgroundColor: P.hover },
         } as const)
       : {}
   // A tree row is filled without a border: a graphical border pads its Box
   // and spreads the rows apart.
   const rowFill = (key: string, isOn: boolean) =>
     isGraphic
-      ? ({ key: `${key}:fill`, backgroundColor: isOn ? COLOR.pill : undefined, hover: isOn ? undefined : { backgroundColor: COLOR.hover } } as const)
+      ? ({ key: `${key}:fill`, backgroundColor: isOn ? P.pill : undefined, hover: isOn ? undefined : { backgroundColor: P.hover } } as const)
       : {}
-  const strip = isGraphic ? ({ borderStyle: 'round', borderColor: COLOR.strip, backgroundColor: COLOR.strip } as const) : {}
+  const strip = isGraphic ? ({ borderStyle: 'round', borderColor: P.strip, backgroundColor: P.strip } as const) : {}
   const keyOf = (hotkey: string) => (isGraphic ? undefined : hotkey)
 
   const line = (name: IconName, color?: string) =>
-    Svg ? <Svg source={lineSvg(name, color)} alt={name} width={16} height={16} /> : <Text dimColor>{glyphOf(name)}</Text>
+    Svg ? <Svg source={lineSvg(name, color ?? P.muted)} alt={name} width={16} height={16} /> : <Text dimColor>{glyphOf(name)}</Text>
   const tile = (name: IconName, size: number) =>
-    Svg ? <Svg source={tileSvg(name, size)} alt={name} width={size} height={size} /> : <Text color={COLOR.muted}>{glyphOf(name)}</Text>
+    Svg ? <Svg source={tileSvg(name, size, P)} alt={name} width={size} height={size} /> : <Text color={P.muted}>{glyphOf(name)}</Text>
   const spacer = () => (Svg ? <Svg source={SPACER_SVG} alt="" width={16} height={16} /> : <Text> </Text>)
-  const accentOf = (name: IconName) => (name === 'key' ? '#e0a94e' : name === 'link' ? '#6aa6ee' : undefined)
+  const accentOf = (name: IconName) => (name === 'key' || name === 'link' ? P.tint[name]?.icon : undefined)
   const blank = () => <Text> </Text>
 
   const dotOf = (state: Row['dot']) =>
     state === 'connected' ? (
-      <Text color={COLOR.connected}>●</Text>
+      <Text color={P.connected}>●</Text>
     ) : state === 'error' ? (
       <Text color="error">●</Text>
     ) : (
@@ -202,23 +212,23 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     return (
       <Box flexDirection="column" alignItems="center" flexShrink={0} width={1} overflow="hidden">
         <Button key={`${id}-up`} plain onPress={() => move(Math.max(0, offset - step))}>
-          <Text color={COLOR.muted}>{isGraphic ? '▲' : '▴'}</Text>
+          <Text color={P.muted}>{isGraphic ? '▲' : '▴'}</Text>
         </Button>
         {Array.from({ length: track }, (_, index) => (
           <Button key={`${id}-at-${index}`} plain onPress={() => move(at(index))}>
             {index >= from && index < from + thumb ? (
-              <Text mono color={isGraphic ? COLOR.thumb : COLOR.muted}>
+              <Text mono color={isGraphic ? P.thumb : P.muted}>
                 ┃
               </Text>
             ) : (
-              <Text mono color={isGraphic ? COLOR.track : undefined} dimColor={!isGraphic}>
+              <Text mono color={isGraphic ? P.track : undefined} dimColor={!isGraphic}>
                 │
               </Text>
             )}
           </Button>
         ))}
         <Button key={`${id}-down`} plain onPress={() => move(Math.min(span.max, offset + step))}>
-          <Text color={COLOR.muted}>{isGraphic ? '▼' : '▾'}</Text>
+          <Text color={P.muted}>{isGraphic ? '▼' : '▾'}</Text>
         </Button>
       </Box>
     )
@@ -238,9 +248,9 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
           ◂
         </Button>
         <Text mono wrap="truncate-end">
-          <Text color={COLOR.track}>{'━'.repeat(from)}</Text>
-          <Text color={COLOR.thumb}>{'━'.repeat(thumb)}</Text>
-          <Text color={COLOR.track}>{'━'.repeat(track - from - thumb)}</Text>
+          <Text color={P.track}>{'━'.repeat(from)}</Text>
+          <Text color={P.thumb}>{'━'.repeat(thumb)}</Text>
+          <Text color={P.track}>{'━'.repeat(track - from - thumb)}</Text>
         </Text>
         <Button key="detail-right" plain dimColor onPress={() => move(Math.min(span.max, offset + step))}>
           ▸
@@ -268,7 +278,9 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
         onSelect={value => void act.pickSource(value)}
       />
     ) : (
-      <Text weight="medium">{shown ? shown.label : 'Database'}</Text>
+      <Text weight="medium" {...ink}>
+        {shown ? shown.label : 'Database'}
+      </Text>
     )
   const switcher = (
     <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} overflow="hidden" {...frame}>
@@ -294,7 +306,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     if (view.sources.length === 0) {
       return (
         <Box flexDirection="column">
-          <Text>No database yet.</Text>
+          <Text {...ink}>No database yet.</Text>
           <Text dimColor>/db connect postgres://user:password@host:5432/database, or start a Postgres container.</Text>
           <Button key="refresh" label="Look again" hotkey={keyOf('r')} plain dimColor onPress={() => void act.refresh()} />
         </Box>
@@ -318,7 +330,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
           spacer()
         ) : row.onPress ? (
           <Button key={`${row.key}:fold`} plain onPress={row.onPress}>
-            <Text color={COLOR.muted}>{glyphOf(row.isOpen ? 'chevronDown' : 'chevronRight')}</Text>
+            <Text color={P.muted}>{glyphOf(row.isOpen ? 'chevronDown' : 'chevronRight')}</Text>
           </Button>
         ) : (
           line(row.isOpen ? 'chevronDown' : 'chevronRight')
@@ -331,7 +343,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     const name = row.isError ? (
       <Text color="error">{row.label}</Text>
     ) : row.isSelected ? (
-      <Text weight="semibold" color={Svg ? undefined : 'claude'}>
+      <Text weight="semibold" color={Svg ? P.text : 'claude'}>
         {row.label}
       </Text>
     ) : isGroup ? (
@@ -339,11 +351,15 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
         {row.label}
       </Text>
     ) : row.depth === 0 ? (
-      <Text weight="semibold">{row.label}</Text>
-    ) : row.isMono ? (
-      <Text mono color={Svg ? COLOR.column : undefined}>
+      <Text weight="semibold" {...ink}>
         {row.label}
       </Text>
+    ) : row.isMono ? (
+      <Text mono color={P.column}>
+        {row.label}
+      </Text>
+    ) : P.text ? (
+      <Text color={P.text}>{row.label}</Text>
     ) : (
       row.label
     )
@@ -447,10 +463,10 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     return (
       <Box flexDirection="row" gap={Svg ? 0 : 2} flexShrink={0} {...frame}>
         {items.map(one => (
-          <Box paddingX={Svg ? 1 : 0} {...pill(one.key, one.id === chosen, COLOR.ground)}>
+          <Box paddingX={Svg ? 1 : 0} {...pill(one.key, one.id === chosen, P.edge)}>
             <Button key={one.key} plain hotkey={one.hotkey && keyOf(one.hotkey)} onPress={() => pick(one.id)}>
               {one.id === chosen ? (
-                <Text weight="medium" mono={isMono} color={Svg ? COLOR.text : 'claude'}>
+                <Text weight="medium" mono={isMono} color={Svg ? P.text : 'claude'}>
                   {one.label}
                 </Text>
               ) : (
@@ -561,7 +577,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
             {line(one.icon, accentOf(one.icon))}
           </Box>
           <Box width={defName} flexShrink={0}>
-            <Text mono wrap="truncate-end">
+            <Text mono wrap="truncate-end" {...ink}>
               {one.name}
             </Text>
           </Box>
@@ -582,7 +598,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
       ) : column.references ? (
         withLink(
           `fk-${column.name}`,
-          <Text mono size="footnote" color={COLOR.link} wrap="truncate-end">
+          <Text mono size="footnote" color={P.link} wrap="truncate-end">
             {`→ ${column.references}`}
           </Text>,
           column.target,
@@ -593,7 +609,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
       lines.push(
         cells(
           line(icon, accentOf(icon)),
-          <Text mono weight={column.isPrimaryKey ? 'semibold' : 'regular'}>
+          <Text mono weight={column.isPrimaryKey ? 'semibold' : 'regular'} {...ink}>
             {column.name}
           </Text>,
           <Text mono dimColor>
@@ -640,6 +656,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
               tabular
               wrap="truncate-end"
               dimColor={isHeader || cell === null}
+              color={isHeader || cell === null ? undefined : P.text}
               italic={cell === null}
               weight={isHeader ? 'medium' : 'regular'}
             >
@@ -657,7 +674,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
 
     const toolbar = (
       <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} flexShrink={0} flexWrap="wrap">
-        <Text>{range}</Text>
+        <Text {...ink}>{range}</Text>
         <Box flexDirection="row" gap={1} alignItems="center">
           <Text dimColor size="footnote">
             Limit
@@ -691,10 +708,10 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     const more = ROW_LIMITS[at + 1]
     const step = (key: string, glyph: string, to: DbRowLimit | undefined) =>
       to === undefined ? (
-        <Text color={COLOR.border}>{glyph}</Text>
+        <Text color={P.border}>{glyph}</Text>
       ) : (
         <Button key={key} plain onPress={() => void act.setLimit(to)}>
-          <Text color={COLOR.muted}>{glyph}</Text>
+          <Text color={P.muted}>{glyph}</Text>
         </Button>
       )
 
@@ -702,7 +719,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
       <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0} {...frame}>
         {step('limit-less', '‹', less)}
         <Box width={4} justifyContent="center">
-          <Text mono weight="medium" tabular>
+          <Text mono weight="medium" tabular {...ink}>
             {String(view.limit)}
           </Text>
         </Box>
@@ -725,7 +742,11 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
     )
 
     return {
-      lines: sourceLines.map(one => <Text wrap="truncate-end">{one}</Text>),
+      lines: sourceLines.map(one => (
+        <Text wrap="truncate-end" {...ink}>
+          {one}
+        </Text>
+      )),
       cols: gutter + Math.max(...sourceLines.map(one => one.length)) + 1,
       toolbar,
       toolbarRows: toolbar ? 1 : 0,
@@ -825,7 +846,7 @@ export function drawPane({ els, Input, Select, Svg, width, height, detailTop = 0
           <Box flexDirection="row" gap={1} alignItems="center" flexShrink={1} overflow="hidden">
             {tile(KIND_ICON[ref.kind], 32)}
             <Box flexDirection="column" flexShrink={1} overflow="hidden">
-              <Text size="heading" weight="semibold" wrap="truncate-end">
+              <Text size="heading" weight="semibold" wrap="truncate-end" {...ink}>
                 {ref.name}
               </Text>
               <Text dimColor size="footnote" wrap="truncate-end">

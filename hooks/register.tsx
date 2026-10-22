@@ -5,6 +5,8 @@ import { createActions } from './client/actions'
 import { detailForOf, drawPane, scrolled, shouldLift } from './client/pane'
 import type { PaneLayout } from './client/pane'
 import { EMPTY_VIEW } from './client/state'
+import { THEME_MODES, themeModeOf } from './client/theme'
+import type { ThemeMode } from './client/theme'
 import { forgetUrl, parseUrl, saveUrl } from './engine/connection'
 import { createEngine } from './engine/engine'
 import type { Host } from './engine/host'
@@ -26,9 +28,16 @@ let opened: { for: string; top: number } | undefined
 let settling = 0
 /** How long the wheel rests before the open object comes to the top of the window. */
 const SETTLE_MS = 300
+/** The palette the pane draws in, kept across sessions. */
+const THEME_KEY = 'theme'
 const USAGE =
-  'Use /db, /db connect postgres://user:password@host:5432/database [name], /db forget <name> or /db refresh. ' +
-  'Running Postgres containers show up by themselves.'
+  'Use /db, /db connect postgres://user:password@host:5432/database [name], /db forget <name>, /db refresh ' +
+  'or /db theme system|light|dark. Running Postgres containers show up by themselves.'
+const THEME_WORD: Record<ThemeMode, string> = {
+  system: 'follows the app’s light or dark theme',
+  light: 'stays light',
+  dark: 'stays dark',
+}
 
 export const register: Register = (on, options) => {
   const psqlPath = typeof options.psql_path === 'string' && options.psql_path ? options.psql_path : 'psql'
@@ -37,7 +46,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'db',
       description: 'Open the database view (PostgreSQL)',
-      argumentHint: '[connect <url> [name] | forget <name> | refresh]',
+      argumentHint: '[connect <url> [name] | forget <name> | refresh | theme system|light|dark]',
     })
 
     return next(e)
@@ -94,6 +103,20 @@ export const register: Register = (on, options) => {
       return { text: `Forgot ${name}.` }
     }
 
+    // The palette, for the graphical surfaces: the terminal keeps its own colours.
+    if (verb === 'theme') {
+      const [mode = ''] = rest
+      if (!THEME_MODES.includes(mode as ThemeMode)) {
+        const now = themeModeOf(await $.store.get(THEME_KEY))
+
+        return { text: `The database view ${THEME_WORD[now]} (${now}). Use /db theme system, light or dark.` }
+      }
+      await $.store.set(THEME_KEY, mode)
+      $.ui.invalidate('ui.render')
+
+      return { text: `The database view now ${THEME_WORD[mode as ThemeMode]}.` }
+    }
+
     if (verb === 'refresh') {
       await act.refresh()
 
@@ -140,6 +163,7 @@ export const register: Register = (on, options) => {
     })
 
     const els = $.ui.resolve(e)
+    const theme = themeModeOf(await $.store.get(THEME_KEY))
     const now = await read($, view)
     // Where the body scrolls, an object opens where the window is, so it is
     // in view beside the row that opened it however far the tree goes.
@@ -155,6 +179,7 @@ export const register: Register = (on, options) => {
       detailTop: opened.top,
       view: now,
       act,
+      theme,
     })
     layout = drawn.layout
 
